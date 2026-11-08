@@ -1,0 +1,14 @@
+{
+  "name": "@b2b/web",
+  "private": true,
+  "type": "module",
+  "version": "0.0.0",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -p . && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@b2b/ui": "*"
+  }
+}

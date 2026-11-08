@@ -1,0 +1,79 @@
+@import "tailwindcss";
+
+/* Shared components live in this package; let Tailwind scan them from every app. */
+@source "./";
+
+/*
+ * Theme tokens (shadcn-style). --brand is overridden at runtime with the tenant's
+ * primary colour, so each manufacturer's apps carry their own colour.
+ */
+:root {
+  --brand: #7c5c1e;
+  --brand-foreground: #ffffff;
+  --background: #fafaf9;
+  --foreground: #1c1917;
+  --card: #ffffff;
+  --muted: #f5f5f4;
+  --muted-foreground: #78716c;
+  --border: #e7e5e4;
+  --input: #d6d3d1;
+  --ring: var(--brand);
+  --danger: #b91c1c;
+  --success: #15803d;
+  --warning: #b45309;
+  --radius: 0.625rem;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --background: #0c0a09;
+    --foreground: #f5f5f4;
+    --card: #1c1917;
+    --muted: #292524;
+    --muted-foreground: #a8a29e;
+    --border: #292524;
+    --input: #44403c;
+    --danger: #f87171;
+    --success: #4ade80;
+    --warning: #fbbf24;
+  }
+}
+
+@theme inline {
+  --color-brand: var(--brand);
+  --color-brand-foreground: var(--brand-foreground);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-danger: var(--danger);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --radius-lg: var(--radius);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-sm: calc(var(--radius) - 4px);
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", "Noto Sans Devanagari", sans-serif;
+}
+
+@layer base {
+  * {
+    border-color: var(--border);
+  }
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+  body {
+    background: var(--background);
+    color: var(--foreground);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+  /* Weights line up in columns. */
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+}
