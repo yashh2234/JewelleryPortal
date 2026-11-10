@@ -67,15 +67,17 @@ class ProductionFlowTest extends TestCase
             [$wo] = $prod->createWorkOrders($order, [$order->lines->pluck('id')->all()]);
             $this->assertSame(3, $wo->qty);
             $this->assertSame(['2.4' => 1, '2.6' => 2], $wo->sizes);
-            $this->assertSame(Order::IN_PRODUCTION, $order->fresh()->status);
+            $this->assertSame(Order::WORK_ORDER_CREATED, $order->fresh()->status);
             $steps = $wo->steps()->with('process')->get();
             $this->assertSame('Melting', $steps[0]->process->name);   // default route
 
             // Stage 1 from the vault; returns into the WO.
             $issue = $prod->issueForStep($steps[0], $ramesh->id, [['karat_id' => $k22->id, 'gross' => '70']]);   // 64.120 fine
             $this->assertSame('vault', $issue->lines[0]->from->type);
+            $this->assertSame(Order::MATERIAL_ISSUED, $order->fresh()->status);
             $card = $issue->jobCard;
             $ops->receive($card, ['gross' => '69.9'], null, 'wo', []);
+            $this->assertSame(Order::IN_PRODUCTION, $order->fresh()->status);
             $ops->closeJobCard($card);
             $prod->advance($steps[0]);
             $this->assertSame('64.028', $prod->goldInWo($wo)['fine']);
@@ -97,7 +99,7 @@ class ProductionFlowTest extends TestCase
 
             $prod->complete($wo->fresh());
             $this->assertSame('0.000', $prod->goldInWo($wo)['fine']);        // leftover moved to scrap
-            $this->assertSame(Order::READY, $order->fresh()->status);
+            $this->assertSame(Order::UNDER_QC, $order->fresh()->status);   // pieces wait for QC
 
             FinishedItem::query()->update(['qc_status' => 'passed']);
 

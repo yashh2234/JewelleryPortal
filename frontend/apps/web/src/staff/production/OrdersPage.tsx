@@ -1,52 +1,72 @@
-import { Alert, api, ApiError, Badge, Button, Card, CardHeader, EmptyState, Field, Input, Select, Table, Td, Textarea, WeightInput, type Paginated } from '@b2b/ui'
+import { Alert, api, ApiError, Badge, Button, Card, CardHeader, EmptyState, Field, Input, rupees, Select, Table, Td, Textarea, WeightInput, type Paginated } from '@b2b/ui'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Plus, Trash2 } from 'lucide-react'
+import { Plus, Search, Trash2 } from 'lucide-react'
 import { useState } from 'react'
-import { Link, useNavigate } from 'react-router'
+import { Link, useNavigate, useSearchParams } from 'react-router'
 import { useCan } from '../auth'
 import { PageTitle } from '../layout'
 import { fmtDate, useKarats } from '../metal/shared'
 import type { Design, Retailer } from '../types'
-import { ORDER_STATUS, type OrderRow } from './types'
+import { ORDER_GROUPS, ORDER_STATUS, PAYMENT_STATUS, type OrderRow } from './types'
 
 export default function OrdersPage() {
   const can = useCan()
-  const [status, setStatus] = useState('')
+  const [params, setParams] = useSearchParams()
+  const status = params.get('status') ?? ''
+  const overdue = params.get('overdue') === '1'
   const [search, setSearch] = useState('')
   const [creating, setCreating] = useState(false)
+  const setStatus = (v: string) => setParams(v ? { status: v } : {}, { replace: true })
 
   const orders = useQuery({
-    queryKey: ['orders', status, search],
-    queryFn: () => api.get<Paginated<OrderRow>>(`/api/v1/orders?status=${status}&search=${encodeURIComponent(search)}`),
+    queryKey: ['orders', status, search, overdue],
+    queryFn: () => api.get<Paginated<OrderRow>>(`/api/v1/orders?${new URLSearchParams({
+      ...(status === 'portal' ? { status: 'new', source: 'portal' } : status ? { status } : {}),
+      ...(overdue ? { overdue: '1' } : {}),
+      search,
+    })}`),
   })
 
   return (
     <>
-      <PageTitle title="Orders">
-        <Input className="w-40" placeholder="Order no." value={search} onChange={(e) => setSearch(e.target.value)} />
-        <Select className="w-48" value={status} onChange={(e) => setStatus(e.target.value)}>
-          <option value="">All open & recent</option>
-          {Object.entries(ORDER_STATUS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+      <PageTitle title="Orders" description={overdue ? 'Past their expected delivery date' : 'Every retailer order from entry to delivery'}>
+        <div className="relative">
+          <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+          <Input className="w-56 pl-9" placeholder="Order no. or retailer" value={search} onChange={(e) => setSearch(e.target.value)} />
+        </div>
+        <Select className="w-52" value={status} onChange={(e) => setStatus(e.target.value)}>
+          <option value="">All orders</option>
+          <option value="portal">New from portal</option>
+          <optgroup label="Groups">
+            {Object.entries(ORDER_GROUPS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+          </optgroup>
+          <optgroup label="Status">
+            {Object.entries(ORDER_STATUS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+          </optgroup>
         </Select>
-        {can('orders.manage') && <Button onClick={() => setCreating(!creating)}>{creating ? 'Close' : 'New order'}</Button>}
+        {can('orders.manage') && <Button onClick={() => setCreating(!creating)}>{creating ? 'Close' : <><Plus /> New order</>}</Button>}
       </PageTitle>
 
       {creating && <NewOrder onDone={() => setCreating(false)} />}
 
       <Card>
-        {orders.data?.data.length === 0 ? <EmptyState title="No orders yet">Orders come from the retailer portal or are entered here for phone/WhatsApp orders.</EmptyState> : (
-          <Table head={['Order', 'Retailer', 'Lines', 'Pieces', 'Due', 'Status']}>
-            {orders.data?.data.map((o) => (
-              <tr key={o.id}>
-                <Td className="font-medium"><Link className="hover:underline" to={`/staff/orders/${o.id}`}>{o.order_no}</Link>
-                  <div className="text-xs text-muted-foreground">{fmtDate(o.created_at)} · {o.source}</div></Td>
-                <Td>{o.retailer.shop_name}<div className="text-xs text-muted-foreground">{o.retailer.city}</div></Td>
-                <Td className="tabular">{o.lines_count}</Td>
-                <Td className="tabular">{o.qty_dispatched_total}/{o.qty_total}</Td>
-                <Td>{fmtDate(o.due_date)}</Td>
-                <Td><Badge tone={ORDER_STATUS[o.status].tone}>{ORDER_STATUS[o.status].label}</Badge></Td>
-              </tr>
-            ))}
+        {orders.data?.data.length === 0 ? <EmptyState title="No orders here">Orders come from the retailer portal or are entered here for phone / WhatsApp orders.</EmptyState> : (
+          <Table head={['Order', 'Retailer', 'Pieces', 'Value', 'Payment', 'Due', 'Status']}>
+            {orders.data?.data.map((o) => {
+              const late = o.due_date && o.due_date < new Date().toISOString().slice(0, 10) && !['dispatched', 'delivered', 'closed', 'cancelled'].includes(o.status)
+              return (
+                <tr key={o.id}>
+                  <Td className="font-medium"><Link className="text-brand hover:underline" to={`/staff/orders/${o.id}`}>{o.order_no}</Link>
+                    <div className="text-xs font-normal text-muted-foreground">{fmtDate(o.created_at)} · {o.source}</div></Td>
+                  <Td>{o.retailer.shop_name}<div className="text-xs text-muted-foreground">{o.retailer.city}</div></Td>
+                  <Td className="tabular">{o.qty_dispatched_total}/{o.qty_total}</Td>
+                  <Td className="tabular">{rupees(o.estimated_value)}</Td>
+                  <Td><Badge tone={PAYMENT_STATUS[o.payment_status]?.tone ?? 'neutral'}>{PAYMENT_STATUS[o.payment_status]?.label ?? o.payment_status}</Badge></Td>
+                  <Td className={late ? 'font-medium text-danger' : ''}>{fmtDate(o.due_date)}</Td>
+                  <Td><Badge tone={ORDER_STATUS[o.status].tone}>{ORDER_STATUS[o.status].label}</Badge></Td>
+                </tr>
+              )
+            })}
           </Table>
         )}
       </Card>

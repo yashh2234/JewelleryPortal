@@ -3,12 +3,13 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router'
 import { useCan } from '../auth'
+import { SHOW_EXTRAS } from '../../workflow'
 import { PageTitle } from '../layout'
 import { useKarats, useProcesses } from '../metal/shared'
 import type { Retailer } from '../types'
 import type { Ahc, FinishedItem, OrderRow } from './types'
 
-type Action = 'qc' | 'rework' | 'hallmark' | 'dispatch' | null
+type Action = 'qc' | 'rework' | 'hallmark' | 'dispatch' | 'location' | null
 
 /** Finished pieces in stock. Select pieces → QC, rework, hallmark lot, or dispatch. */
 export default function FinishedPage() {
@@ -65,18 +66,20 @@ export default function FinishedPage() {
 
       {message && <div className="mb-3"><Alert tone={message.tone}>{message.text}</Alert></div>}
 
-      {selected.length > 0 && can('production.manage') && (
+      {selected.length > 0 && can('production.manage|qc.manage|dispatch.manage') && (
         <Card className="sticky top-16 z-10 mb-3 flex flex-wrap items-center gap-2 p-3">
           <span className="text-sm font-medium">{selected.length} selected · {fine.toFixed(3)} g fine</span>
-          <Button size="sm" variant={action === 'qc' ? 'default' : 'outline'} onClick={() => setAction('qc')}>QC</Button>
-          <Button size="sm" variant={action === 'hallmark' ? 'default' : 'outline'} onClick={() => setAction('hallmark')}>Hallmark lot</Button>
-          <Button size="sm" variant={action === 'rework' ? 'default' : 'outline'} onClick={() => setAction('rework')}>Rework</Button>
-          {can('orders.manage') && <Button size="sm" variant={action === 'dispatch' ? 'default' : 'outline'} onClick={() => setAction('dispatch')}>Dispatch</Button>}
+          {can('qc.manage') && <Button size="sm" variant={action === 'qc' ? 'default' : 'outline'} onClick={() => setAction('qc')}>Quality check</Button>}
+          {SHOW_EXTRAS && can('production.manage') && <Button size="sm" variant={action === 'hallmark' ? 'default' : 'outline'} onClick={() => setAction('hallmark')}>Hallmark lot</Button>}
+          {can('qc.manage') && <Button size="sm" variant={action === 'rework' ? 'default' : 'outline'} onClick={() => setAction('rework')}>Rework</Button>}
+          <Button size="sm" variant={action === 'location' ? 'default' : 'outline'} onClick={() => setAction('location')}>Storage</Button>
+          {can('dispatch.manage') && <Button size="sm" variant={action === 'dispatch' ? 'default' : 'outline'} onClick={() => setAction('dispatch')}>Dispatch</Button>}
           <Button size="sm" variant="ghost" onClick={() => setSelected([])}>Clear</Button>
         </Card>
       )}
 
       {action === 'qc' && selected.length > 0 && <QcForm ids={selected} onDone={done} onError={fail} />}
+      {action === 'location' && selected.length > 0 && <LocationForm ids={selected} onDone={done} onError={fail} />}
       {action === 'rework' && selected.length > 0 && <ReworkForm ids={selected} onDone={(no) => done(`Rework ${no} created.`)} onError={fail} />}
       {action === 'hallmark' && selected.length > 0 && <LotForm items={chosen} onDone={(id) => { done('Lot created.'); navigate(`/staff/hallmarking/${id}`) }} onError={fail} />}
       {action === 'dispatch' && <DispatchForm ids={selected} defaultRetailer={params.get('retailer')} defaultOrder={params.get('order')} onDone={(no) => done(`Dispatched on challan ${no}.`)} onError={fail} />}
@@ -85,7 +88,7 @@ export default function FinishedPage() {
         <Table head={[
           <input key="all" type="checkbox" aria-label="Select all" checked={list.length > 0 && selected.length === list.length}
             onChange={(e) => setSelected(e.target.checked ? list.map((i) => i.id) : [])} />,
-          'Tag', 'Design', 'Size', 'Gross', 'Net', 'Fine', 'QC', 'HUID', 'Order',
+          'Tag', 'Design', 'Size', 'Gross', 'Net', 'Fine', 'QC', 'HUID', 'Where', 'Order',
         ]}>
           {list.map((i) => (
             <tr key={i.id} className={selected.includes(i.id) ? 'bg-brand/5' : undefined}>
@@ -96,8 +99,12 @@ export default function FinishedPage() {
               <Td className="tabular">{i.gross_wt}</Td>
               <Td className="tabular">{i.net_wt}</Td>
               <Td className="tabular">{i.fine_wt}</Td>
-              <Td><Badge tone={i.qc_status === 'passed' ? 'success' : i.qc_status === 'failed' ? 'danger' : 'neutral'}>{i.qc_status}</Badge></Td>
+              <Td>
+                <Badge tone={i.qc_status === 'passed' ? 'success' : i.qc_status === 'failed' ? 'danger' : 'neutral'}>{i.qc_status}</Badge>
+                {i.qc_defects && <div className="mt-0.5 max-w-40 truncate text-xs text-danger" title={i.qc_defects}>{i.qc_defects}</div>}
+              </Td>
               <Td className="font-mono">{i.huid ?? '—'}</Td>
+              <Td className="text-xs">{i.storage_location ?? '—'}</Td>
               <Td className="text-xs">{i.order_line?.order.order_no ?? 'stock'}</Td>
             </tr>
           ))}
@@ -108,18 +115,75 @@ export default function FinishedPage() {
   )
 }
 
+const QC_CHECKS: [string, string][] = [
+  ['design', 'Design matches the order'], ['quantity', 'Quantity correct'], ['weight', 'Weight within range'],
+  ['purity', 'Purity / karat correct'], ['finishing', 'Finishing & polish'], ['stone_setting', 'Stone setting secure'],
+]
+
+/** Spec §8: checklist to pass; defects (and optionally a rework route) to fail. */
 function QcForm({ ids, onDone, onError }: { ids: number[]; onDone: (t: string) => void; onError: (e: unknown) => void }) {
+  const processes = useProcesses()
+  const [checks, setChecks] = useState<Record<string, boolean>>(Object.fromEntries(QC_CHECKS.map(([k]) => [k, false])))
   const [remarks, setRemarks] = useState('')
+  const [defects, setDefects] = useState('')
+  const [route, setRoute] = useState<number[]>([])
+  const all = Object.values(checks).every(Boolean)
+
   const m = useMutation({
-    mutationFn: (result: 'passed' | 'failed') => api.post<{ updated: number }>('/api/v1/finished-items/qc', { item_ids: ids, result, remarks: remarks || null }),
-    onSuccess: (r, result) => onDone(`${r.updated} piece(s) marked QC ${result}.`),
+    mutationFn: (result: 'passed' | 'failed') => api.post<{ updated: number; rework: { wo_no: string } | null }>('/api/v1/finished-items/qc', {
+      item_ids: ids, result, remarks: remarks || null, checklist: checks, defects: defects || null,
+      rework_process_ids: result === 'failed' && route.length ? route : null,
+    }),
+    onSuccess: (r, result) => onDone(`${r.updated} piece(s) QC ${result}.${r.rework ? ` Rework ${r.rework.wo_no} sent to production.` : ''}`),
+    onError,
+  })
+
+  return (
+    <Card className="mb-3 p-4">
+      <p className="mb-3 text-sm font-semibold">Quality check · {ids.length} piece(s)</p>
+      <div className="grid gap-2 sm:grid-cols-3">
+        {QC_CHECKS.map(([k, label]) => (
+          <label key={k} className={`flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-sm transition-colors ${checks[k] ? 'border-success/40 bg-success/[0.06]' : ''}`}>
+            <input type="checkbox" className="size-4 accent-[var(--accent)]" checked={checks[k]} onChange={(e) => setChecks({ ...checks, [k]: e.target.checked })} />
+            {label}
+          </label>
+        ))}
+      </div>
+      <div className="mt-3 grid gap-3 sm:grid-cols-2">
+        <Field label="Defects found (for a fail)"><Input value={defects} placeholder="e.g. Stone loose on 2 pieces" onChange={(e) => setDefects(e.target.value)} /></Field>
+        <Field label="Remarks"><Input value={remarks} onChange={(e) => setRemarks(e.target.value)} /></Field>
+      </div>
+      <div className="mt-3">
+        <p className="mb-1.5 text-xs text-muted-foreground">On fail, send back for rework through (optional):</p>
+        <div className="flex flex-wrap gap-1.5">
+          {processes.data?.map((p) => (
+            <button key={p.id} type="button" onClick={() => setRoute(route.includes(p.id) ? route.filter((x) => x !== p.id) : [...route, p.id])}
+              className={`rounded-full border px-3 py-1 text-xs transition-colors ${route.includes(p.id) ? 'border-brand bg-brand text-brand-foreground' : 'hover:bg-muted'}`}>
+              {route.includes(p.id) && `${route.indexOf(p.id) + 1}. `}{p.name}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="mt-4 flex flex-wrap gap-2">
+        <Button onClick={() => m.mutate('passed')} disabled={!all} loading={m.isPending} title={all ? '' : 'Tick every check to pass'}>Approve</Button>
+        <Button variant="danger" onClick={() => m.mutate('failed')} disabled={!defects && !remarks} loading={m.isPending}>Reject{route.length ? ' & send to rework' : ''}</Button>
+        {!all && <span className="self-center text-xs text-muted-foreground">Tick every check to approve.</span>}
+      </div>
+    </Card>
+  )
+}
+
+function LocationForm({ ids, onDone, onError }: { ids: number[]; onDone: (t: string) => void; onError: (e: unknown) => void }) {
+  const [loc, setLoc] = useState('')
+  const m = useMutation({
+    mutationFn: () => api.post<{ updated: number }>('/api/v1/finished-items/location', { item_ids: ids, storage_location: loc || null }),
+    onSuccess: (r) => onDone(`${r.updated} piece(s) moved to ${loc || 'no location'}.`),
     onError,
   })
   return (
     <Card className="mb-3 flex flex-wrap items-end gap-2 p-3">
-      <Field label="QC remarks" className="min-w-60 flex-1"><Input value={remarks} onChange={(e) => setRemarks(e.target.value)} /></Field>
-      <Button onClick={() => m.mutate('passed')} loading={m.isPending}>Pass</Button>
-      <Button variant="danger" onClick={() => m.mutate('failed')} loading={m.isPending}>Fail</Button>
+      <Field label="Storage location" className="min-w-60 flex-1"><Input value={loc} placeholder="e.g. Safe A · Tray 3" onChange={(e) => setLoc(e.target.value)} /></Field>
+      <Button onClick={() => m.mutate()} loading={m.isPending}>Save</Button>
     </Card>
   )
 }
@@ -184,14 +248,17 @@ function DispatchForm({ ids, defaultRetailer, defaultOrder, onDone, onError }: {
   const [retailerId, setRetailerId] = useState(defaultRetailer ?? '')
   const [orderId, setOrderId] = useState(defaultOrder ?? '')
   const [remarks, setRemarks] = useState('')
+  const [ship, setShip] = useState({ shipment_status: 'dispatched', courier: '', tracking_no: '' })
+  const couriers = useQuery({ queryKey: ['couriers'], queryFn: () => api.get<{ data: string[] }>('/api/v1/couriers') })
   const orders = useQuery({
     queryKey: ['orders', 'dispatchable', retailerId],
-    queryFn: () => api.get<Paginated<OrderRow>>(`/api/v1/orders?retailer_id=${retailerId}&status=in_production,ready,partially_dispatched`),
+    queryFn: () => api.get<Paginated<OrderRow>>(`/api/v1/orders?retailer_id=${retailerId}&status=production_completed,ready_for_dispatch,partially_dispatched,in_production,under_qc`),
     enabled: !!retailerId,
   })
   const m = useMutation({
     mutationFn: () => api.post<{ data: { id: number; challan_no: string } }>('/api/v1/dispatches', {
       retailer_id: Number(retailerId), order_id: orderId ? Number(orderId) : null, item_ids: ids, remarks: remarks || null,
+      shipment_status: ship.shipment_status, courier: ship.courier || null, tracking_no: ship.tracking_no || null,
     }),
     onSuccess: (r) => { window.open(`/api/v1/dispatches/${r.data.id}/challan`, '_blank'); onDone(r.data.challan_no) },
     onError,
@@ -210,6 +277,18 @@ function DispatchForm({ ids, defaultRetailer, defaultOrder, onDone, onError }: {
           {orders.data?.data.map((o) => <option key={o.id} value={o.id}>{o.order_no}</option>)}
         </Select>
       </Field>
+      <Field label="Status" className="min-w-36">
+        <Select value={ship.shipment_status} onChange={(e) => setShip({ ...ship, shipment_status: e.target.value })}>
+          <option value="packing">Packing</option><option value="dispatched">Dispatched</option><option value="in_transit">In transit</option>
+        </Select>
+      </Field>
+      <Field label="Courier" className="min-w-40">
+        <Select value={ship.courier} onChange={(e) => setShip({ ...ship, courier: e.target.value })}>
+          <option value="">—</option>
+          {couriers.data?.data.map((c) => <option key={c} value={c}>{c}</option>)}
+        </Select>
+      </Field>
+      <Field label="Tracking no." className="min-w-36"><Input value={ship.tracking_no} onChange={(e) => setShip({ ...ship, tracking_no: e.target.value })} /></Field>
       <Field label="Remarks" className="min-w-48 flex-1"><Input value={remarks} onChange={(e) => setRemarks(e.target.value)} /></Field>
       <Button disabled={!retailerId || ids.length === 0} onClick={() => m.mutate()} loading={m.isPending}>Dispatch {ids.length} & print challan</Button>
       {ids.length === 0 && <span className="pb-2 text-sm text-muted-foreground">Tick the pieces to send.</span>}

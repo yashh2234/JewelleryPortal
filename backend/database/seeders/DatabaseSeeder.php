@@ -45,7 +45,8 @@ class DatabaseSeeder extends Seeder
         ]);
 
         app(TenantContext::class)->runAs($tenant, function () {
-            User::create(['name' => 'Metal Manager', 'email' => 'metal@acme.test', 'password' => 'password'])
+            User::role('owner')->first()->update(['phone' => '9876500010']);
+            User::create(['name' => 'Metal Manager', 'email' => 'metal@acme.test', 'phone' => '9876500011', 'password' => 'password'])
                 ->assignRole('metal_manager');
 
             foreach ([['Ramesh', '9876500001'], ['Imran', '9876500002'], ['Suresh', '9876500003']] as [$name, $phone]) {
@@ -57,7 +58,7 @@ class DatabaseSeeder extends Seeder
                 'shop_name' => 'Sharma Jewellers', 'contact_name' => 'R. Sharma', 'city' => 'Pune',
                 'phone' => '9822000000', 'status' => Retailer::STATUS_ACTIVE, 'metal_account_enabled' => true,
             ]);
-            $retailer->users()->create(['name' => 'R. Sharma', 'email' => 'shop@sharma.test', 'password' => 'password']);
+            $retailer->users()->create(['name' => 'R. Sharma', 'email' => 'shop@sharma.test', 'phone' => '9822000000', 'password' => 'password']);
 
             Retailer::create(['shop_name' => 'Verma Gold House', 'city' => 'Nagpur', 'status' => Retailer::STATUS_PENDING]);
 

@@ -75,6 +75,12 @@ export interface Design {
   making_charge: string | null
   making_type: 'per_gram' | 'per_piece' | 'percent' | null
   is_published: boolean
+  description?: string | null
+  stone_details?: string | null
+  specifications?: string | null
+  min_order_qty?: number
+  production_days?: number | null
+  availability?: 'in_stock' | 'made_to_order' | 'unavailable'
   karats?: { id: number; label: string }[]
   images?: DesignImage[]
 }

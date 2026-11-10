@@ -18,6 +18,7 @@ use App\Services\Metal\Ledger;
 use App\Services\Metal\LedgerException;
 use App\Services\Metal\MetalOperations;
 use App\Support\Metal\Weight;
+use App\Support\Money;
 use App\Support\NumberSeries;
 use Illuminate\Support\Facades\DB;
 
@@ -30,7 +31,7 @@ use Illuminate\Support\Facades\DB;
  */
 class Production
 {
-    public function __construct(private Ledger $ledger, private MetalOperations $ops) {}
+    public function __construct(private Ledger $ledger, private MetalOperations $ops, private OrderProgress $progress) {}
 
     // ── Orders ───────────────────────────────────────────────────────────────
 
@@ -46,6 +47,8 @@ class Production
                 'order_no' => NumberSeries::next('ORD'),
                 'retailer_id' => $retailer->id,
                 'source' => $source,
+                // Portal orders arrive as "new"; orders keyed in by staff are already reviewed.
+                'status' => $source === 'portal' ? Order::NEW : Order::PENDING_APPROVAL,
                 'due_date' => $data['due_date'] ?? null,
                 'remarks' => $data['remarks'] ?? null,
             ]);
@@ -54,22 +57,71 @@ class Production
                 $order->lines()->create($line);
             }
 
+            $order->forceFill(['estimated_value' => $this->estimate($order, $retailer)])->save();
+
             return $order->load('lines');
         });
     }
 
+    /** Estimated order value at today's rate (metal + making), for the sales order. */
+    public function estimate(Order $order, Retailer $retailer): ?string
+    {
+        $catalogue = app(\App\Services\Portal\Catalogue::class);
+        $total = '0';
+        $any = false;
+
+        foreach ($order->lines()->with(['design', 'karat'])->get() as $line) {
+            $weight = $line->target_wt_min && $line->target_wt_max
+                ? Weight::round(bcdiv(Weight::add($line->target_wt_min, $line->target_wt_max), '2', 6))
+                : ($line->target_wt_min ?? $line->target_wt_max);
+            $est = $catalogue->estimate($line->design, $line->karat_id, (string) $line->karat->purity_pct, $retailer, $weight);
+            if ($est) {
+                $any = true;
+                $total = Money::add($total, Money::mul((string) $line->qty, $est['total']));
+            }
+        }
+
+        return $any ? $total : null;
+    }
+
+    /** Sales has reviewed a new order and passes it on for approval. */
+    public function submitForApproval(Order $order): Order
+    {
+        $this->assertStatus($order, [Order::NEW]);
+        $order->forceFill(['status' => Order::PENDING_APPROVAL])->save();
+        app(\App\Services\Push\Notify::class)->staffWith('orders.approve', "Order {$order->order_no} needs approval", $order->retailer->shop_name, "/staff/orders/{$order->id}", 'order.pending_approval');
+
+        return $order;
+    }
+
+    public function approve(Order $order): Order
+    {
+        $this->assertStatus($order, [Order::NEW, Order::PENDING_APPROVAL]);
+        $order->forceFill(['status' => Order::APPROVED, 'approved_at' => now(), 'confirmed_at' => now(), 'approved_by' => auth('staff')->id()])->save();
+        app(\App\Services\Push\Notify::class)->orderStatus($order, 'Approved and going into production.', 'order.approved');
+        app(\App\Services\Push\Notify::class)->staffWith('production.manage', "Order {$order->order_no} approved", 'Create the work orders.', "/staff/orders/{$order->id}", 'order.approved');
+
+        return $order;
+    }
+
+    /** Older clients: confirm = approve. */
     public function confirm(Order $order): Order
     {
-        $this->assertStatus($order, [Order::PLACED]);
-        $order->forceFill(['status' => Order::CONFIRMED, 'confirmed_at' => now()])->save();
-        app(\App\Services\Push\Notify::class)->orderStatus($order, 'Confirmed and going into production.');
+        return $this->approve($order);
+    }
+
+    /** Closed by hand once dispatched / delivered and settled. */
+    public function close(Order $order): Order
+    {
+        $this->assertStatus($order, [Order::DISPATCHED, Order::DELIVERED]);
+        $order->forceFill(['status' => Order::CLOSED, 'closed_at' => now()])->save();
 
         return $order;
     }
 
     public function hold(Order $order): Order
     {
-        $this->assertStatus($order, [Order::PLACED, Order::CONFIRMED, Order::IN_PRODUCTION, Order::READY]);
+        $this->assertStatus($order, [Order::NEW, Order::PENDING_APPROVAL, Order::APPROVED, ...Order::PRODUCTION]);
         $order->forceFill(['status_before_hold' => $order->status, 'status' => Order::ON_HOLD])->save();
 
         return $order;
@@ -78,14 +130,14 @@ class Production
     public function resume(Order $order): Order
     {
         $this->assertStatus($order, [Order::ON_HOLD]);
-        $order->forceFill(['status' => $order->status_before_hold ?? Order::CONFIRMED, 'status_before_hold' => null])->save();
+        $order->forceFill(['status' => $order->status_before_hold ?? Order::APPROVED, 'status_before_hold' => null])->save();
 
-        return $order;
+        return $this->progress->refresh($order);
     }
 
     public function cancel(Order $order, string $reason): Order
     {
-        $this->assertStatus($order, [Order::PLACED, Order::CONFIRMED, Order::ON_HOLD, Order::IN_PRODUCTION]);
+        $this->assertStatus($order, [Order::NEW, Order::PENDING_APPROVAL, Order::APPROVED, Order::ON_HOLD, Order::WORK_ORDER_CREATED, Order::MATERIAL_ISSUED, Order::IN_PRODUCTION]);
 
         $active = WorkOrder::whereHas('orderLines', fn ($q) => $q->where('order_id', $order->id))->where('status', WorkOrder::IN_PROGRESS)->exists();
         if ($active) {
@@ -97,7 +149,7 @@ class Production
                 ->where('status', WorkOrder::OPEN)->get()->each(fn ($wo) => $wo->forceFill(['status' => WorkOrder::CANCELLED])->save());
             $order->forceFill(['status' => Order::CANCELLED, 'cancel_reason' => $reason])->save();
         });
-        app(\App\Services\Push\Notify::class)->orderStatus($order, "Cancelled: {$reason}");
+        app(\App\Services\Push\Notify::class)->orderStatus($order, "Cancelled: {$reason}", 'order.cancelled');
 
         return $order;
     }
@@ -114,7 +166,7 @@ class Production
      */
     public function createWorkOrders(Order $order, ?array $groups = null): array
     {
-        $this->assertStatus($order, [Order::CONFIRMED, Order::IN_PRODUCTION]);
+        $this->assertStatus($order, [Order::APPROVED, ...Order::PRODUCTION]);
 
         $lines = $order->lines()->with(['design', 'workOrders'])->get()->keyBy('id');
         $groups ??= $lines->filter(fn ($l) => $l->workOrders->isEmpty())->keys()->map(fn ($id) => [$id])->values()->all();
@@ -154,8 +206,13 @@ class Production
                 $created[] = $wo;
             }
 
-            if ($order->status === Order::CONFIRMED) {
-                $order->forceFill(['status' => Order::IN_PRODUCTION])->save();
+            if ($order->status === Order::APPROVED) {
+                $order->forceFill(['status' => Order::WORK_ORDER_CREATED])->save();
+            }
+            $this->progress->refresh($order);
+
+            foreach ($created as $wo) {
+                app(\App\Services\Push\Notify::class)->staffWith('production.manage', "Work order {$wo->wo_no} created", "{$order->order_no} · {$wo->qty} pcs", "/staff/work-orders/{$wo->id}", 'wo.created');
             }
 
             return $created;
@@ -237,6 +294,7 @@ class Production
         }
 
         $step->forceFill(['status' => $step->jobCards()->exists() ? WoStep::DONE : WoStep::SKIPPED, 'done_at' => now()])->save();
+        $this->progress->forWorkOrder($step->work_order_id);
 
         return $step;
     }
@@ -299,6 +357,8 @@ class Production
                 ]);
             }
 
+            $this->progress->forWorkOrder($wo);
+
             return $items;
         });
     }
@@ -318,6 +378,11 @@ class Production
         if (! $wo->finishedItems()->exists()) {
             throw new LedgerException('Record the finished pieces before completing the work order.');
         }
+        // Spec 16.5: gold is reconciled first — every flagged difference resolved.
+        $unresolved = $wo->jobCards()->where('job_cards.excess_loss_fine', '>', 0)->whereNull('job_cards.excess_resolution')->pluck('card_no');
+        if ($unresolved->isNotEmpty()) {
+            throw new LedgerException('Resolve the excess wastage on '.$unresolved->implode(', ').' before completing the work order.');
+        }
 
         return DB::transaction(function () use ($wo) {
             $woLoc = $this->ledger->workOrder($wo);
@@ -335,7 +400,7 @@ class Production
                 ->each(fn ($s) => $s->forceFill(['status' => $s->jobCards()->exists() ? WoStep::DONE : WoStep::SKIPPED, 'done_at' => now()])->save());
             $wo->forceFill(['status' => WorkOrder::COMPLETED, 'completed_at' => now()])->save();
 
-            $this->refreshOrders($wo);
+            $this->progress->forWorkOrder($wo);
 
             return $wo;
         });
@@ -382,30 +447,17 @@ class Production
                 ])->all());
 
             $items->each(fn ($i) => $i->forceFill(['status' => FinishedItem::REWORK, 'qc_remarks' => trim(($i->qc_remarks ?? '').' Rework: '.$reason)])->save());
+            $this->progress->forItems($items);
+            app(\App\Services\Push\Notify::class)->staffWith('production.manage', "Rework {$wo->wo_no}", $reason, "/staff/work-orders/{$wo->id}", 'qc.failed');
 
             return $wo;
         });
     }
 
-    /** Orders whose work orders are all completed become ready. */
+    /** Kept for callers: the order's production status is worked out by OrderProgress. */
     public function refreshOrders(WorkOrder $wo): void
     {
-        $orders = Order::whereHas('lines.workOrders', fn ($q) => $q->where('work_orders.id', $wo->id))->get();
-
-        foreach ($orders as $order) {
-            if ($order->status !== Order::IN_PRODUCTION) {
-                continue;
-            }
-
-            $lines = $order->lines()->with('workOrders')->get();
-            $allPlanned = $lines->every(fn (OrderLine $l) => $l->workOrders->isNotEmpty());
-            $allDone = $lines->flatMap->workOrders->every(fn ($w) => in_array($w->status, [WorkOrder::COMPLETED, WorkOrder::CANCELLED], true));
-
-            if ($allPlanned && $allDone) {
-                $order->forceFill(['status' => Order::READY])->save();
-                app(\App\Services\Push\Notify::class)->orderStatus($order, 'Ready for dispatch.');
-            }
-        }
+        $this->progress->forWorkOrder($wo);
     }
 
     private function assertStatus(Order $order, array $allowed): void

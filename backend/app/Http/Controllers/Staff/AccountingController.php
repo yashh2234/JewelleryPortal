@@ -195,18 +195,31 @@ class AccountingController extends Controller
         $reason = $request->validate(['reason' => ['required', 'string', 'max:255']])['reason'];
         $voucher->load(['entries.account', 'entries.party', 'party']);
 
-        if ($voucher->source_type) {
+        if ($voucher->source_type && $voucher->source_type !== 'order') {
             abort(422, "This voucher was posted automatically from {$voucher->source_type}; reverse it at the source.");
         }
 
-        return response()->json(['data' => $this->books->cancel($voucher, $reason)], 201);
+        $cancelled = $this->books->cancel($voucher, $reason);
+        if ($voucher->source_type === 'order' && ($order = \App\Models\Order::find($voucher->source_id))) {
+            app(\App\Services\Accounting\OrderPayments::class)->refresh($order);
+        }
+
+        return response()->json(['data' => $cancelled], 201);
     }
 
     public function receipt(Request $request): JsonResponse
     {
         $d = $this->moneyRules($request);
+        $order = $request->filled('order_id') ? \App\Models\Order::findOrFail($request->integer('order_id')) : null;
 
-        return $this->made($this->vouchers->receipt(Party::findOrFail($d['party_id']), $d['amount'], $d['mode'], $d['date'] ?? today()->toDateString(), $d['narration'] ?? null));
+        // Against an order: counts as the order's advance / payment (spec §4).
+        $voucher = $this->vouchers->receipt(Party::findOrFail($d['party_id']), $d['amount'], $d['mode'], $d['date'] ?? today()->toDateString(), $d['narration'] ?? null,
+            $order ? ['source_type' => 'order', 'source_id' => $order->id] : []);
+        if ($order) {
+            app(\App\Services\Accounting\OrderPayments::class)->refresh($order);
+        }
+
+        return $this->made($voucher);
     }
 
     public function payment(Request $request): JsonResponse
@@ -295,7 +308,12 @@ class AccountingController extends Controller
 
     public function invoiceFromDispatch(Request $request, Dispatch $dispatch): JsonResponse
     {
-        return $this->made($this->invoicing->post($dispatch, $this->invoiceOpts($request)));
+        $voucher = $this->invoicing->post($dispatch, $this->invoiceOpts($request));
+        if ($dispatch->order) {
+            app(\App\Services\Accounting\OrderPayments::class)->refresh($dispatch->order);
+        }
+
+        return $this->made($voucher);
     }
 
     public function invoicePdf(Voucher $voucher, TenantContext $context): Response

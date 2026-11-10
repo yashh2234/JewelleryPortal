@@ -22,6 +22,7 @@ class Retailer extends Model
     protected $fillable = [
         'shop_name', 'contact_name', 'gstin', 'state_code', 'city', 'address', 'phone', 'email',
         'credit_limit', 'making_slab_id', 'metal_account_enabled', 'hallmark_mandatory', 'status',
+        'salesperson_id', 'payment_terms_days',
     ];
 
     protected function casts(): array
@@ -43,6 +44,21 @@ class Retailer extends Model
     public function collections(): \Illuminate\Database\Eloquent\Relations\BelongsToMany
     {
         return $this->belongsToMany(Collection::class);
+    }
+
+    public function salesperson(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'salesperson_id');
+    }
+
+    public function orders(): HasMany
+    {
+        return $this->hasMany(Order::class);
+    }
+
+    public function notes(): HasMany
+    {
+        return $this->hasMany(CrmNote::class)->latest('id');
     }
 
     public function makingSlab(): BelongsTo

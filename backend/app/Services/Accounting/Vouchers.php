@@ -17,12 +17,12 @@ class Vouchers
     public function __construct(private Books $books) {}
 
     /** Money received from a party into cash or bank. */
-    public function receipt(Party $party, string $amount, string $mode, string $date, ?string $narration = null): Voucher
+    public function receipt(Party $party, string $amount, string $mode, string $date, ?string $narration = null, array $extra = []): Voucher
     {
         return $this->books->post(Voucher::RECEIPT, $date, $party, [
             ['account' => $this->cashOrBank($mode), 'debit' => $amount],
             ['party' => $party, 'credit' => $amount],
-        ], ['narration' => $narration, 'meta' => ['mode' => $mode]]);
+        ], ['narration' => $narration, 'meta' => ['mode' => $mode]] + $extra);
     }
 
     /** Money paid to a party (incl. kaarigar advances and weekly payments). */

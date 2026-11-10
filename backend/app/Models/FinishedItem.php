@@ -21,7 +21,7 @@ class FinishedItem extends Model
 
     protected $fillable = [
         'tag_no', 'work_order_id', 'order_line_id', 'design_id', 'karat_id', 'size',
-        'gross_wt', 'stone_wt', 'net_wt', 'purity_pct', 'fine_wt',
+        'gross_wt', 'stone_wt', 'net_wt', 'purity_pct', 'fine_wt', 'storage_location',
     ];
 
     protected function casts(): array
@@ -29,6 +29,7 @@ class FinishedItem extends Model
         return [
             'gross_wt' => 'decimal:3', 'stone_wt' => 'decimal:3', 'net_wt' => 'decimal:3',
             'purity_pct' => 'decimal:3', 'fine_wt' => 'decimal:3',
+            'qc_checklist' => 'array', 'qc_at' => 'datetime',
         ];
     }
 

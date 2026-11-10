@@ -168,7 +168,7 @@ class AuthGuardsTest extends TestCase
         $this->app->instance(SmsSender::class, $sms);
         $this->kaarigarUser();
 
-        $otp = app(\App\Services\Auth\KaarigarOtp::class);
+        $otp = app(\App\Services\Auth\LoginOtp::class);
         $this->asTenant($this->tenant, function () use ($otp, $sms) {
             $otp->send('9876500001');
             for ($i = 0; $i < 5; $i++) {

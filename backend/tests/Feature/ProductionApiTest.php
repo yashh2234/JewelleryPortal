@@ -52,8 +52,16 @@ class ProductionApiTest extends TestCase
             'lines' => [['design_id' => $design->id, 'karat_id' => $k22, 'qty' => 2, 'size' => '2.6']],
         ])->assertCreated()->json('data');
 
-        $this->as()->postJson($this->api("orders/{$order['id']}/confirm"))->assertOk()->assertJsonPath('data.status', 'confirmed');
+        // Staff-entered orders skip "new": they are already reviewed.
+        $this->assertSame('pending_approval', $order['status']);
+        $this->as()->postJson($this->api("orders/{$order['id']}/approve"))->assertOk()->assertJsonPath('data.status', 'approved');
+
+        // Advance against the order → receipt voucher, payment status "advance".
+        $this->as()->postJson($this->api("orders/{$order['id']}/advance"), ['amount' => '5000', 'mode' => 'bank'])
+            ->assertCreated()->assertJsonPath('payments.status', 'advance')->assertJsonPath('payments.paid', '5000.00');
+
         $wo = $this->as()->postJson($this->api("orders/{$order['id']}/work-orders"))->assertCreated()->json('data.0');
+        $this->assertSame('work_order_created', $this->as()->getJson($this->api("orders/{$order['id']}"))->json('data.status'));
 
         $board = $this->as()->getJson($this->api('work-orders/board'))->assertOk();
         $melting = collect($board->json('columns'))->firstWhere('process.name', 'Melting');
@@ -65,10 +73,12 @@ class ProductionApiTest extends TestCase
         $issue = $this->as()->postJson($this->api("work-orders/{$wo['id']}/issue"), [
             'step_id' => $stepId, 'kaarigar_id' => $kaarigar->id, 'items' => [['karat_id' => $k22, 'gross' => '50']],
         ])->assertCreated()->json('data');
+        $this->assertSame('material_issued', $this->as()->getJson($this->api("orders/{$order['id']}"))->json('data.status'));
 
         $this->as()->postJson($this->api('metal/receive'), [
             'job_card_id' => $issue['job_card']['id'], 'destination' => 'wo', 'work' => ['gross' => '49.9'], 'close' => true,
         ])->assertCreated();
+        $this->assertSame('in_production', $this->as()->getJson($this->api("orders/{$order['id']}"))->json('data.status'));
 
         $this->assertSame('45.708', $this->as()->getJson($this->api("work-orders/{$wo['id']}"))->json('data.gold_in_wo'));
 
@@ -80,10 +90,14 @@ class ProductionApiTest extends TestCase
             'pieces' => [['gross' => '24.8', 'size' => '2.6'], ['gross' => '24.9', 'size' => '2.6']],
         ])->assertCreated()->json('data');
         $this->as()->postJson($this->api("work-orders/{$wo['id']}/complete"))->assertOk()->assertJsonPath('data.status', 'completed');
-        $this->as()->getJson($this->api("orders/{$order['id']}"))->assertJsonPath('data.status', 'ready');
+        $this->as()->getJson($this->api("orders/{$order['id']}"))->assertJsonPath('data.status', 'under_qc');
 
         $ids = array_column($items, 'id');
+        // Passing needs the whole checklist.
+        $this->as()->postJson($this->api('finished-items/qc'), ['item_ids' => $ids, 'result' => 'passed', 'checklist' => ['stone_setting' => false]])->assertUnprocessable();
         $this->as()->postJson($this->api('finished-items/qc'), ['item_ids' => $ids, 'result' => 'passed'])->assertOk()->assertJsonPath('updated', 2);
+        // Passed but not yet hallmarked (Sharma needs HUIDs) → production completed, not yet ready.
+        $this->as()->getJson($this->api("orders/{$order['id']}"))->assertJsonPath('data.status', 'production_completed');
 
         $ahc = $this->as()->postJson($this->api('ahcs'), ['name' => 'Pune AHC', 'charge_per_piece' => '45'])->assertCreated()->json('data');
         $lot = $this->as()->postJson($this->api('hallmark-lots'), ['ahc_id' => $ahc['id'], 'karat_id' => $k22, 'item_ids' => $ids])->assertCreated()->json('data');
@@ -98,13 +112,26 @@ class ProductionApiTest extends TestCase
             ->assertOk()->assertJsonPath('data.status', 'returned');
 
         $this->as()->getJson($this->api('finished-items?search=AB12CD'))->assertJsonPath('total', 1);
+        $this->as()->getJson($this->api("orders/{$order['id']}"))->assertJsonPath('data.status', 'ready_for_dispatch');
 
         $dispatch = $this->as()->postJson($this->api('dispatches'), [
             'retailer_id' => $retailer->id, 'order_id' => $order['id'], 'item_ids' => $ids,
+            'courier' => 'Delhivery', 'tracking_no' => 'DL123',
         ])->assertCreated()->json('data');
+        $this->assertSame('https://www.delhivery.com/track/package/DL123', $dispatch['tracking_url']);
 
         $this->as()->getJson($this->api("orders/{$order['id']}"))->assertJsonPath('data.status', 'dispatched');
         $this->as()->get($this->api("dispatches/{$dispatch['id']}/challan"))->assertOk()->assertHeader('content-type', 'application/pdf');
+
+        // Shipment moves to delivered → the order is delivered, then closed by hand.
+        $this->as()->patchJson($this->api("dispatches/{$dispatch['id']}/shipment"), ['shipment_status' => 'in_transit'])->assertOk();
+        $this->as()->patchJson($this->api("dispatches/{$dispatch['id']}/shipment"), ['shipment_status' => 'delivered'])->assertOk()
+            ->assertJsonPath('data.shipment_status', 'delivered');
+        $this->as()->getJson($this->api("orders/{$order['id']}"))->assertJsonPath('data.status', 'delivered');
+        $this->as()->postJson($this->api("orders/{$order['id']}/close"))->assertOk()->assertJsonPath('data.status', 'closed');
+
+        // The retailer heard about it in the app as well.
+        $this->assertTrue(\Illuminate\Support\Facades\DB::table('app_notifications')->where('user_type', 'staff')->exists());
     }
 
     public function test_roles_split_production_and_gold(): void
@@ -118,7 +145,15 @@ class ProductionApiTest extends TestCase
 
         $this->as($sales)->postJson($this->api('work-orders'), ['design_id' => $design->id, 'karat_id' => $k22, 'qty' => 5])->assertForbidden();
 
-        // Production manager moves stages but cannot issue gold.
-        $this->as($production)->postJson($this->api("work-orders/{$wo['id']}/issue"), [])->assertForbidden();
+        // Order manager plans work orders but cannot issue gold.
+        $orders = $this->staffWithRole($this->tenant, 'order_manager');
+        $this->as($orders)->postJson($this->api("work-orders/{$wo['id']}/issue"), [])->assertForbidden();
+        // Quality manager can't create work orders; dispatch manager can't approve orders.
+        $this->as($this->staffWithRole($this->tenant, 'quality_manager'))->postJson($this->api('work-orders'), ['design_id' => $design->id, 'karat_id' => $k22, 'qty' => 1])->assertForbidden();
+        $orderId = $this->asTenant($this->tenant, fn () => \App\Models\Order::create([
+            'order_no' => 'ORD-T1', 'retailer_id' => Retailer::create(['shop_name' => 'R', 'status' => 'active'])->id, 'status' => 'pending_approval',
+        ])->id);
+        $this->as($this->staffWithRole($this->tenant, 'dispatch_manager'))->postJson($this->api("orders/{$orderId}/approve"))->assertForbidden();
+        $this->as($orders)->postJson($this->api("orders/{$orderId}/approve"))->assertOk();
     }
 }

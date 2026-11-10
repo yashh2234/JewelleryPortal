@@ -1,4 +1,4 @@
-import { useTenant } from '@b2b/ui'
+import { ThemeToggle, useTenant } from '@b2b/ui'
 import { useQueryClient } from '@tanstack/react-query'
 import { ArrowLeft } from 'lucide-react'
 import { useEffect, type ReactNode } from 'react'
@@ -10,7 +10,7 @@ import { OfflineBar } from './bars'
 import { flush } from './offline'
 import { EarningsScreen, IssuesScreen, JobsScreen, KhataScreen, RequestsScreen, ReturnScreen } from './screens'
 
-/** Kaarigar app, mounted at /app/kaarigar/*. Hindi / English, big touch targets, works offline for reading. */
+/** Kaarigar app, mounted at /kaarigar/*. Hindi / English, big touch targets, works offline for reading. */
 export default function KaarigarApp() {
   const { data } = useSession()
   if (data?.type !== 'kaarigar') return null
@@ -49,12 +49,13 @@ function Screen({ title, back = '/kaarigar', children }: { title: Key; back?: st
   const tenant = useTenant()
   return (
     <div className="mx-auto min-h-dvh max-w-md pb-10">
-      <header className="sticky top-0 z-10 flex items-center gap-3 bg-brand p-4 text-brand-foreground">
-        <Link to={back} aria-label={t('back')} className="-m-2 p-2"><ArrowLeft className="size-6" /></Link>
+      <header className="bg-brand-sheen sticky top-0 z-10 flex items-center gap-3 px-4 pb-4 pt-[max(1rem,env(safe-area-inset-top))] text-brand-foreground shadow-raised">
+        <Link to={back} aria-label={t('back')} className="-ml-1 grid size-10 place-items-center rounded-full transition-colors hover:bg-white/15 active:bg-white/25"><ArrowLeft className="size-6" /></Link>
         <div className="min-w-0 flex-1">
-          <p className="text-xs opacity-80">{tenant.name}</p>
+          <p className="text-xs font-medium opacity-75">{tenant.name}</p>
           <h1 className="truncate text-xl font-semibold">{t(title)}</h1>
         </div>
+        <ThemeToggle onBrand />
         <LangToggle />
       </header>
       <OfflineBar />

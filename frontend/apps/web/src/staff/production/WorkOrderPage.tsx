@@ -88,26 +88,42 @@ function StepCard({ step, woId, current, goldInWo, karatId, onChange }: { step: 
   const [kaarigarId, setKaarigarId] = useState('')
   // "One-click issue for next stage": pre-fill with what is sitting in the WO.
   const [gross, setGross] = useState('')
+  const [override, setOverride] = useState('')
   const [done, setDone] = useState<Tx | null>(null)
+  const [editing, setEditing] = useState(false)
 
   const issue = useMutation({
     mutationFn: () => api.post<{ data: Tx }>(`/api/v1/work-orders/${woId}/issue`, {
       step_id: step.id, kaarigar_id: Number(kaarigarId), items: [{ karat_id: karatId, gross }],
+      ...(override ? { override_reason: override } : {}),
     }),
-    onSuccess: (r) => { setDone(r.data); setGross(''); onChange() },
+    onSuccess: (r) => { setDone(r.data); setGross(''); setOverride(''); onChange() },
   })
   const advance = useMutation({ mutationFn: () => api.post(`/api/v1/work-orders/${woId}/steps/${step.id}/advance`), onSuccess: onChange })
   const err = [issue.error, advance.error].find((e) => e instanceof ApiError) as ApiError | undefined
   const open = step.job_cards.filter((c) => c.status === 'open')
   const tone = { done: 'success', in_progress: 'brand', pending: 'neutral', skipped: 'neutral' } as const
   const fromWo = Number(goldInWo) > 0
+  const canOverride = !!err?.message.includes('override with a reason')
+  const when = (d: string | null) => (d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }) : null)
 
   return (
     <Card className={current ? 'border-brand/50' : step.status === 'pending' ? 'opacity-70' : ''}>
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b px-4 py-2">
-        <p className="font-medium">{step.sequence}. {step.process.name}</p>
-        <Badge tone={tone[step.status]}>{step.status.replace('_', ' ')}</Badge>
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b px-4 py-2.5">
+        <div>
+          <p className="font-medium">{step.sequence}. {step.process.name}</p>
+          <p className="text-xs text-muted-foreground">
+            {step.assignee ? <>Assigned to <b className="font-medium text-foreground">{step.assignee.name}</b></> : 'Not assigned'}
+            {when(step.started_at) && ` · started ${when(step.started_at)}`}{when(step.done_at) && ` · done ${when(step.done_at)}`}
+          </p>
+          {step.remarks && <p className="mt-0.5 text-xs italic text-muted-foreground">{step.remarks}</p>}
+        </div>
+        <div className="flex items-center gap-2">
+          {can('production.manage') && <Button size="sm" variant="ghost" onClick={() => setEditing(!editing)}>{editing ? 'Close' : 'Assign / note'}</Button>}
+          <Badge tone={tone[step.status]}>{step.status.replace('_', ' ')}</Badge>
+        </div>
       </div>
+      {editing && <StepEditor step={step} woId={woId} onDone={() => { setEditing(false); onChange() }} />}
       {step.job_cards.length > 0 && (
         <Table head={['Card', 'Kaarigar', 'Issued', 'Back', 'Held / loss', '']}>
           {step.job_cards.map((c) => (
@@ -137,7 +153,12 @@ function StepCard({ step, woId, current, goldInWo, karatId, onChange }: { step: 
               <Field label={`Gross g ${fromWo ? '(from WO)' : '(from vault)'}`} className="w-40">
                 <WeightInput required value={gross} onValueChange={setGross} />
               </Field>
-              <Button type="submit" loading={issue.isPending}>Issue for {step.process.name}</Button>
+              {canOverride && (
+                <Field label="Override reason" className="min-w-64 flex-1">
+                  <Input required value={override} onChange={(e) => setOverride(e.target.value)} placeholder="Why issue anyway?" />
+                </Field>
+              )}
+              <Button type="submit" loading={issue.isPending}>{canOverride ? 'Override & issue' : `Issue for ${step.process.name}`}</Button>
               {fromWo && <span className="pb-2 text-xs text-muted-foreground">{goldInWo} g fine waiting in the WO</span>}
             </form>
           )}
@@ -149,6 +170,28 @@ function StepCard({ step, woId, current, goldInWo, karatId, onChange }: { step: 
         </div>
       )}
     </Card>
+  )
+}
+
+function StepEditor({ step, woId, onDone }: { step: WoStep; woId: number; onDone: () => void }) {
+  const staff = useQuery({ queryKey: ['staff-directory'], queryFn: () => api.get<{ data: { id: number; name: string }[] }>('/api/v1/staff-directory') })
+  const [userId, setUserId] = useState(step.assignee ? String(step.assignee.id) : '')
+  const [remarks, setRemarks] = useState(step.remarks ?? '')
+  const save = useMutation({
+    mutationFn: () => api.patch(`/api/v1/work-orders/${woId}/steps/${step.id}`, { assigned_user_id: userId ? Number(userId) : null, remarks: remarks || null }),
+    onSuccess: onDone,
+  })
+  return (
+    <form className="flex flex-wrap items-end gap-2 border-b bg-muted/40 px-4 py-3" onSubmit={(e) => { e.preventDefault(); save.mutate() }}>
+      <Field label="Responsible" className="min-w-48">
+        <Select value={userId} onChange={(e) => setUserId(e.target.value)}>
+          <option value="">—</option>
+          {staff.data?.data.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
+        </Select>
+      </Field>
+      <Field label="Remarks" className="min-w-64 flex-1"><Input value={remarks} onChange={(e) => setRemarks(e.target.value)} /></Field>
+      <Button type="submit" loading={save.isPending}>Save</Button>
+    </form>
   )
 }
 

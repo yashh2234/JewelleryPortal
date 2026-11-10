@@ -12,6 +12,7 @@ class OrderLine extends Model
     use BelongsToTenant;
 
     protected $fillable = [
+        'customization',
         'order_id', 'design_id', 'karat_id', 'size', 'qty', 'target_wt_min', 'target_wt_max',
         'stone_details', 'remarks', 'reference_image',
     ];

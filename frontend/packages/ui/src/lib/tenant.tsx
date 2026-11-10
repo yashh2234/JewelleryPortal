@@ -79,7 +79,11 @@ export function TenantProvider({ children, appTitle }: { children: ReactNode; ap
   }
 
   if (!tenant) {
-    return <div className="flex min-h-dvh items-center justify-center text-muted-foreground">Loading…</div>
+    return (
+      <div className="grid min-h-dvh place-items-center" role="status" aria-label="Loading">
+        <span className="size-7 animate-spin rounded-full border-[2.5px] border-brand/20 border-t-brand" />
+      </div>
+    )
   }
 
   return <TenantContext.Provider value={tenant}>{children}</TenantContext.Provider>

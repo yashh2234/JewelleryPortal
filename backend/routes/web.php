@@ -4,25 +4,25 @@ use App\Http\Controllers\Web\ManifestController;
 use App\Http\Controllers\Web\SpaController;
 use Illuminate\Support\Facades\Route;
 
-// Central domain landing page (marketing / signup lives here later).
-Route::get('/', function () {
-    $host = request()->getHost();
-    $central = config('tenancy.central_domain');
+/*
+| Pages. The React app lives at the root of each workspace: acme.yourapp.in/.
+| Laravel serves public/app.html for every app URL (with the tenant injected);
+| real files (assets, sw.js, icons) are served by Apache straight from /public.
+*/
 
-    // On a tenant subdomain, the root opens the staff app.
-    return $host !== $central && str_ends_with($host, '.'.$central)
-        ? redirect('/app/')
-        : view('welcome');
+// ── Central domain: landing page and the super-admin console ────────────────
+Route::domain(config('tenancy.central_domain'))->group(function () {
+    Route::get('/', fn () => view('welcome'));
+
+    Route::get('/admin/{path?}', function () {
+        $page = public_path('app.html');
+        abort_unless(is_file($page), 503, 'Front end not built. Run `npm run build` in /frontend.');
+
+        return response(file_get_contents($page))->header('Content-Type', 'text/html; charset=UTF-8');
+    })->where('path', '.*');
 });
 
-// Super-admin console: same built app, but on the central domain with no workspace.
-Route::get('/app/admin/{path?}', function () {
-    $index = public_path('app/index.html');
-    abort_unless(is_file($index), 503, 'Front end not built.');
-
-    return response(file_get_contents($index))->header('Content-Type', 'text/html; charset=UTF-8');
-})->where('path', '.*');
-
+// ── Workspaces ───────────────────────────────────────────────────────────────
 Route::middleware('tenant')->group(function () {
     // QR on a kaarigar's paper slip: read-only statement for the last 60 days, no login.
     Route::get('/khata/{token}', function (string $token, App\Services\Metal\Statements $statements, App\Support\Tenancy\TenantContext $ctx) {
@@ -35,13 +35,10 @@ Route::middleware('tenant')->group(function () {
         ]);
     })->where('token', '[A-Za-z0-9]{32}')->middleware('throttle:30,1');
 
-    Route::get('/manifest/{app}.webmanifest', ManifestController::class)
-        ->whereIn('app', SpaController::APPS);
+    Route::get('/manifest.webmanifest', ManifestController::class);
 
-    foreach (SpaController::APPS as $app) {
-        Route::get("/{$app}/{path?}", SpaController::class)
-            ->where('path', '.*')
-            ->defaults('app', $app)
-            ->name("spa.{$app}");
-    }
+    // Every other page URL is the app (login, /staff/…, /portal/…, /kaarigar/…).
+    Route::get('/{path?}', SpaController::class)
+        ->where('path', '^(?!api/|sanctum/|storage/|up$).*$')
+        ->name('spa');
 });

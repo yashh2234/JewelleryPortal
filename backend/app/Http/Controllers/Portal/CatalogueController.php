@@ -8,6 +8,7 @@ use App\Models\Collection;
 use App\Models\Design;
 use App\Models\Karat;
 use App\Models\Retailer;
+use App\Models\WishlistItem;
 use App\Services\Portal\Catalogue;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -46,7 +47,10 @@ class CatalogueController extends Controller
             'karat_id' => ['nullable', 'integer'],
             'wt_min' => ['nullable', 'numeric', 'min:0'],
             'wt_max' => ['nullable', 'numeric', 'min:0'],
+            'availability' => ['nullable', 'in:in_stock,made_to_order'],
+            'wishlist' => ['nullable', 'boolean'],
         ]);
+        $saved = WishlistItem::where('retailer_id', $retailer->id)->pluck('design_id');
 
         $designs = $this->catalogue->visible($retailer)
             ->with(['category:id,name', 'karats:id,label,purity_pct', 'images' => fn ($q) => $q->orderBy('sort')])
@@ -56,10 +60,12 @@ class CatalogueController extends Controller
             ->when($d['karat_id'] ?? null, fn ($q, $id) => $q->whereHas('karats', fn ($k) => $k->where('karats.id', $id)))
             ->when(isset($d['wt_min']), fn ($q) => $q->where('approx_weight_max', '>=', $d['wt_min']))
             ->when(isset($d['wt_max']), fn ($q) => $q->where('approx_weight_min', '<=', $d['wt_max']))
+            ->when($d['availability'] ?? null, fn ($q, $a) => $q->where('availability', $a))
+            ->when($d['wishlist'] ?? false, fn ($q) => $q->whereIn('id', $saved))
             ->orderByDesc('id')
             ->paginate(24);
 
-        $designs->getCollection()->transform(fn (Design $design) => $this->present($design, $retailer, false));
+        $designs->getCollection()->transform(fn (Design $design) => $this->present($design, $retailer, false) + ['wishlisted' => $saved->contains($design->id)]);
 
         return response()->json($designs);
     }
@@ -70,7 +76,26 @@ class CatalogueController extends Controller
         $design = $this->catalogue->visible($retailer)->with(['category:id,name', 'karats:id,label,purity_pct', 'images', 'collections:id,name'])
             ->where('code', $code)->firstOrFail();
 
-        return response()->json(['data' => $this->present($design, $retailer, true)]);
+        return response()->json(['data' => $this->present($design, $retailer, true)
+            + ['wishlisted' => WishlistItem::where('retailer_id', $retailer->id)->where('design_id', $design->id)->exists()]]);
+    }
+
+    // ── Wishlist (shared by the shop's users) ───────────────────────────────
+
+    public function wishlist(Request $request, Design $design): JsonResponse
+    {
+        $retailer = $this->retailer($request);
+        abort_unless($this->catalogue->visible($retailer)->whereKey($design->id)->exists(), 404);
+        WishlistItem::firstOrCreate(['retailer_id' => $retailer->id, 'design_id' => $design->id]);
+
+        return response()->json(['wishlisted' => true]);
+    }
+
+    public function unwishlist(Request $request, Design $design): JsonResponse
+    {
+        WishlistItem::where('retailer_id', $this->retailer($request)->id)->where('design_id', $design->id)->delete();
+
+        return response()->json(['wishlisted' => false]);
     }
 
     public function goldRate(): JsonResponse
@@ -89,6 +114,12 @@ class CatalogueController extends Controller
             'approx_weight_min' => $design->approx_weight_min, 'approx_weight_max' => $design->approx_weight_max,
             'sizes' => $design->sizes ?? [],
             'description' => $full ? $design->description : null,
+            'stone_details' => $design->stone_details,
+            'specifications' => $full ? $design->specifications : null,
+            'min_order_qty' => $design->min_order_qty ?? 1,
+            'production_days' => $design->production_days,
+            'availability' => $design->availability ?? 'made_to_order',
+            'making' => $full ? ['charge' => $design->making_charge, 'type' => $design->making_type] : null,
             'karats' => $design->karats->map(fn ($k) => [
                 'id' => $k->id, 'label' => $k->label,
                 'estimate' => $this->catalogue->estimate($design, $k->id, (string) $k->purity_pct, $retailer),

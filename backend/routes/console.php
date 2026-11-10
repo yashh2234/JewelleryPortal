@@ -21,4 +21,12 @@ Schedule::call(fn () => DB::table('idempotency_keys')->where('created_at', '<', 
 // Nightly: rebuild cached gold balances from ledger lines and check every ledger sums to zero.
 Schedule::command('metal:rebuild-balances')->dailyAt('02:30');
 
+// Morning: delayed production, overdue orders, unacknowledged gold issues (in-app + push).
+Schedule::command('erp:daily-alerts')->dailyAt('08:30');
+
+// Read in-app notifications older than 90 days are cleared.
+Schedule::call(fn () => DB::table('app_notifications')->whereNotNull('read_at')->where('created_at', '<', now()->subDays(90))->delete())
+    ->daily()
+    ->name('prune-read-notifications');
+
 // The activity log is never pruned: it is the audit trail for gold and accounts.

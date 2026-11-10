@@ -95,6 +95,14 @@ class MetalOperations
         $from = $this->stockLocation($source, $card);
         $to = $this->ledger->kaarigar($card->kaarigar);
 
+        // Spec 16.3 / §6D: no more gold until earlier issues are acknowledged and reconciled.
+        $incoming = Weight::add('0', ...array_map(fn ($i) => Weight::fine(
+            Weight::net((string) $i['gross'], (string) ($i['stone'] ?? '0'), (string) ($i['findings'] ?? '0')),
+            (string) (isset($i['purity']) && $i['purity'] !== '' ? $i['purity'] : Karat::findOrFail($i['karat_id'])->purity_pct),
+        ), $items));
+        app(IssueRules::class)->assert($card->kaarigar, $incoming, $header['override_reason'] ?? null);
+        unset($header['override_reason']);
+
         return DB::transaction(function () use ($card, $items, $from, $to, $header) {
             $tx = $this->ledger->post(MetalTransaction::ISSUE, $this->cardHeader($card) + $header, array_map(
                 fn ($i) => ['from' => $from, 'to' => $to, 'pieces' => $i['pieces'] ?? null] + $this->metal($i),
@@ -106,7 +114,9 @@ class MetalOperations
                 $card->kaarigar_id,
                 'New gold issued · नया सोना',
                 "{$grossTotal} g on {$card->card_no}. Please accept or dispute.",
-                '/app/kaarigar/issues',
+                '/kaarigar/issues',
+                'gold.issued',
+                whatsapp: true,
             );
 
             if ($step = $card->woStep) {
@@ -116,6 +126,7 @@ class MetalOperations
                 if ($step->workOrder->status === 'open') {
                     $step->workOrder->forceFill(['status' => 'in_progress'])->save();
                 }
+                app(\App\Services\Production\OrderProgress::class)->forWorkOrder($step->work_order_id);
             }
 
             return $tx;
@@ -171,7 +182,10 @@ class MetalOperations
                 throw new LedgerException("Only {$outstanding} g fine is outstanding on {$card->card_no}; this receive is {$incoming} g fine. Check the weights and purity.");
             }
 
-            return $this->ledger->post(MetalTransaction::RECEIVE, $this->cardHeader($card) + $header, $lines);
+            $tx = $this->ledger->post(MetalTransaction::RECEIVE, $this->cardHeader($card) + $header, $lines);
+            app(\App\Services\Production\OrderProgress::class)->forJobCard($card);
+
+            return $tx;
         });
     }
 
@@ -214,9 +228,10 @@ class MetalOperations
 
             if (Weight::isPositive($excess)) {
                 app(\App\Services\Push\Notify::class)->owners(
-                    'Wastage above limit',
-                    "{$card->kaarigar->name}: {$loss} g loss on {$card->card_no} ({$excess} g over the allowed {$pct}%).",
-                    '/app/staff/metal/job-cards?f=alerts',
+                    'Gold reconciliation mismatch',
+                    "{$card->kaarigar->name}: {$loss} g loss on {$card->card_no} ({$excess} g over the allowed {$pct}%). Investigate before issuing more.",
+                    '/staff/metal/job-cards?f=alerts',
+                    'gold.mismatch',
                 );
             }
 

@@ -1,4 +1,4 @@
-import { Alert, api, ApiError, Badge, Button, Card, CardHeader, Field, Input, Select, Table, Td, type Paginated } from '@b2b/ui'
+import { Alert, api, ApiError, Badge, Button, Card, CardHeader, Field, Input, Select, Table, Td, ThemeToggle, type Paginated } from '@b2b/ui'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 
@@ -20,7 +20,7 @@ const tone = { trial: 'warning', active: 'success', suspended: 'danger', cancell
 
 /**
  * Super-admin console for you, the SaaS operator. Opened on the central domain at
- * /app/admin; it is not tied to any workspace.
+ * /admin; it is not tied to any workspace.
  */
 export default function AdminApp() {
   const me = useQuery({
@@ -49,9 +49,10 @@ function AdminLogin() {
   const error = login.error instanceof ApiError ? login.error : null
 
   return (
-    <div className="flex min-h-dvh items-center justify-center p-4">
-      <Card className="w-full max-w-sm p-5">
-        <h1 className="mb-4 text-lg font-semibold">Platform admin</h1>
+    <div className="bg-aura relative flex min-h-dvh items-center justify-center p-4">
+      <ThemeToggle className="absolute right-4 top-4" />
+      <Card className="animate-fade-up w-full max-w-sm p-6 shadow-raised">
+        <h1 className="mb-5 font-display text-2xl font-semibold">Platform admin</h1>
         <form className="grid gap-4" onSubmit={(e) => { e.preventDefault(); login.mutate() }}>
           {error && <Alert>{error.field('email') ?? error.message}</Alert>}
           <Field label="Email"><Input type="email" required value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></Field>
@@ -81,10 +82,11 @@ function Console({ admin }: { admin: Admin }) {
   return (
     <div className="mx-auto max-w-6xl p-4 sm:p-6">
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-xl font-semibold">Workspaces</h1>
+        <h1 className="font-display text-2xl font-semibold">Workspaces</h1>
         <div className="flex items-center gap-2">
           <Input className="w-56" placeholder="Search name or subdomain" value={search} onChange={(e) => setSearch(e.target.value)} />
           <span className="text-sm text-muted-foreground">{admin.email}</span>
+          <ThemeToggle />
           <Button variant="ghost" size="sm" onClick={() => logout.mutate()}>Log out</Button>
         </div>
       </div>

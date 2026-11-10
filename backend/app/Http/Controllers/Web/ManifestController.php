@@ -13,26 +13,24 @@ use Illuminate\Http\JsonResponse;
  */
 class ManifestController extends Controller
 {
-    public function __invoke(TenantContext $context, string $app): JsonResponse
+    public function __invoke(TenantContext $context): JsonResponse
     {
-        abort_unless($app === 'app', 404);
-
         $tenant = $context->get();
 
         $icons = $tenant->logo_url
             ? [['src' => $tenant->logo_url, 'sizes' => '512x512', 'type' => 'image/webp', 'purpose' => 'any']]
             : [
-                ['src' => '/app/pwa-192.png', 'sizes' => '192x192', 'type' => 'image/png'],
-                ['src' => '/app/pwa-512.png', 'sizes' => '512x512', 'type' => 'image/png'],
-                ['src' => '/app/pwa-512.png', 'sizes' => '512x512', 'type' => 'image/png', 'purpose' => 'maskable'],
+                ['src' => '/pwa-192.png', 'sizes' => '192x192', 'type' => 'image/png'],
+                ['src' => '/pwa-512.png', 'sizes' => '512x512', 'type' => 'image/png'],
+                ['src' => '/pwa-512.png', 'sizes' => '512x512', 'type' => 'image/png', 'purpose' => 'maskable'],
             ];
 
         return response()->json([
-            'id' => '/app/',
+            'id' => '/',
             'name' => $tenant->name,
             'short_name' => mb_substr($tenant->name, 0, 12),
-            'start_url' => '/app/',
-            'scope' => '/app/',
+            'start_url' => '/',
+            'scope' => '/',
             'display' => 'standalone',
             'orientation' => 'portrait',
             'background_color' => '#ffffff',

@@ -1,8 +1,8 @@
 import { QueryClient } from '@tanstack/react-query'
 import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client'
 import { createAsyncStoragePersister } from '@tanstack/query-async-storage-persister'
-import { del, get, set } from 'idb-keyval'
-import type { ReactNode } from 'react'
+import { clear, del, get, set } from 'idb-keyval'
+import { useMemo, type ReactNode } from 'react'
 import { ApiError } from './api'
 
 /**
@@ -24,10 +24,10 @@ export function createQueryClient() {
 }
 
 export function QueryProvider({ client, storageKey, children }: { client: QueryClient; storageKey: string; children: ReactNode }) {
-  const persister = createAsyncStoragePersister({
+  const persister = useMemo(() => createAsyncStoragePersister({
     key: storageKey,
     storage: { getItem: (k) => get(k), setItem: (k, v) => set(k, v), removeItem: (k) => del(k) },
-  })
+  }), [storageKey])
 
   return (
     <PersistQueryClientProvider
@@ -41,4 +41,17 @@ export function QueryProvider({ client, storageKey, children }: { client: QueryC
       {children}
     </PersistQueryClientProvider>
   )
+}
+
+/**
+ * Forget everything stored on this device for the signed-in person: the offline
+ * copy of their data and any actions still waiting to be sent. Used on sign-out,
+ * so the next person on a shared phone sees nothing of the previous one.
+ */
+export async function clearPersistedCache(): Promise<void> {
+  try {
+    await clear()
+  } catch {
+    /* storage unavailable (private mode): nothing to clear */
+  }
 }

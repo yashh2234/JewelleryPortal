@@ -105,7 +105,7 @@ export function LangToggle() {
   const { lang, setLang } = useI18n()
   return (
     <button
-      className="rounded-full border border-current/30 px-3 py-1 text-sm font-medium"
+      className="rounded-full border border-current/30 bg-white/10 px-3 py-1 text-sm font-medium transition-colors hover:bg-white/20"
       onClick={() => setLang(lang === 'hi' ? 'en' : 'hi')}
       aria-label="Change language"
     >

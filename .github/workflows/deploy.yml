@@ -42,7 +42,14 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: frontend-build
-          path: backend/public/app
+          path: |
+            backend/public/app.html
+            backend/public/assets
+            backend/public/sw.js
+            backend/public/workbox-*.js
+            backend/public/push-sw.js
+            backend/public/pwa-*.png
+            backend/public/favicon.svg
 
   deploy:
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
@@ -53,7 +60,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: frontend-build
-          path: backend/public/app
+          path: backend/public
       - uses: shivammathur/setup-php@v2
         with:
           php-version: '8.3'

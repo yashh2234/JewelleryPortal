@@ -33,6 +33,7 @@ class CartController extends Controller
         $d = $this->validated($request);
 
         abort_unless($this->catalogue->visible($retailer)->whereKey($d['design_id'])->whereHas('karats', fn ($q) => $q->where('karats.id', $d['karat_id']))->exists(), 422, 'That design or karat is not available.');
+        abort_if(\App\Models\Design::whereKey($d['design_id'])->value('availability') === 'unavailable', 422, 'This design is not available for orders right now.');
 
         // Same design + karat + size + weight + remarks → add to the existing line.
         $existing = CartItem::where('retailer_id', $retailer->id)->where('design_id', $d['design_id'])->where('karat_id', $d['karat_id'])
@@ -89,7 +90,8 @@ class CartController extends Controller
                 'target_wt_min' => $i->target_wt_min, 'target_wt_max' => $i->target_wt_max,
                 'design' => ['id' => $i->design->id, 'code' => $i->design->code, 'name' => $i->design->name,
                     'sizes' => $i->design->sizes ?? [], 'photo' => $i->design->images->first()?->thumb_url,
-                    'approx_weight_min' => $i->design->approx_weight_min, 'approx_weight_max' => $i->design->approx_weight_max],
+                    'approx_weight_min' => $i->design->approx_weight_min, 'approx_weight_max' => $i->design->approx_weight_max,
+                    'min_order_qty' => $i->design->min_order_qty ?? 1, 'production_days' => $i->design->production_days],
                 'karat' => $i->karat->only(['id', 'label']),
                 'est_fine' => $est ? Weight::round(bcmul($est['fine'], (string) $i->qty, 6)) : null,
                 'est_making' => $est ? Money::mul($est['making'], $i->qty) : null,

@@ -17,7 +17,7 @@ export function UpdatePrompt() {
   if (!needRefresh) return null
 
   return (
-    <div className="fixed inset-x-3 bottom-3 z-50 mx-auto flex max-w-md items-center justify-between gap-3 rounded-lg border bg-card p-3 shadow-lg">
+    <div className="fixed inset-x-3 bottom-3 z-50 mx-auto flex max-w-md items-center justify-between gap-3 rounded-xl border bg-elevated p-3 pl-4 shadow-pop animate-fade-up">
       <span className="text-sm">A new version is available.</span>
       <div className="flex gap-2">
         <Button size="sm" variant="ghost" onClick={() => setNeedRefresh(false)}>Later</Button>
@@ -71,7 +71,7 @@ export function InstallPrompt({ appName }: { appName: string }) {
   if (standalone || dismissed || (!deferred && !isIos)) return null
 
   return (
-    <div className="flex items-center justify-between gap-3 rounded-lg border bg-card p-3 text-sm">
+    <div className="flex items-center justify-between gap-3 rounded-xl border bg-card p-3 text-sm shadow-card">
       {deferred ? (
         <>
           <span>Install {appName} on this phone for quick access.</span>

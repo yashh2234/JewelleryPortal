@@ -1,5 +1,11 @@
 # Front-end builds land in Laravel's public folder; CI builds them on deploy.
-/backend/public/app/
+/backend/public/app.html
+/backend/public/assets/
+/backend/public/sw.js
+/backend/public/workbox-*.js
+/backend/public/push-sw.js
+/backend/public/pwa-*.png
+/backend/public/favicon.svg
 
 node_modules/
 /frontend/.env
@@ -7,3 +13,6 @@ node_modules/
 Thumbs.db
 .idea/
 .vscode/
+/frontend/test-results/
+/frontend/playwright-report/
+/backend/database/e2e.sqlite

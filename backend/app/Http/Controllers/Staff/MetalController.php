@@ -61,13 +61,25 @@ class MetalController extends Controller
             'source' => ['required', Rule::in(['vault', 'finished', 'wo'])],
             'job_card_id' => ['nullable', TenantRules::exists('job_cards')],
             'kaarigar_id' => ['required_without:job_card_id', TenantRules::exists('kaarigars')],
-            'process_id' => ['required_without:job_card_id', TenantRules::exists('processes')],
-            'karat_id' => ['required_without:job_card_id', TenantRules::exists('karats')],
+            'process_id' => ['required_without_all:job_card_id,work_order_id', TenantRules::exists('processes')],
+            'karat_id' => ['required_without_all:job_card_id,work_order_id', TenantRules::exists('karats')],
             'design_id' => ['nullable', TenantRules::exists('designs')],
             'description' => ['nullable', 'string', 'max:255'],
             'pieces' => ['nullable', 'integer', 'min:1'],
             'due_date' => ['nullable', 'date'],
+            'work_order_id' => ['nullable', TenantRules::exists('work_orders')],
+            'override_reason' => ['nullable', 'string', 'max:255'],
         ]);
+
+        // Spec 16.3: every issue belongs to a work order (unless the workspace allows loose job cards).
+        if (isset($data['work_order_id']) && ! isset($data['job_card_id'])) {
+            $wo = \App\Models\WorkOrder::findOrFail($data['work_order_id']);
+            $step = $wo->steps()->whereIn('status', [\App\Models\WoStep::PENDING, \App\Models\WoStep::IN_PROGRESS])->orderBy('sequence')->first()
+                ?? throw new LedgerException("{$wo->wo_no} has no stage left to issue for.");
+            $tx = app(\App\Services\Production\Production::class)->issueForStep($step, (int) $data['kaarigar_id'], $data['items'], $this->header($data, ['override_reason']));
+
+            return $this->posted($tx);
+        }
 
         $tx = DB::transaction(function () use ($data) {
             $card = isset($data['job_card_id'])
@@ -77,11 +89,49 @@ class MetalController extends Controller
             if (! $card->kaarigar->is_active) {
                 throw new LedgerException("{$card->kaarigar->name} is inactive.");
             }
+            if (! $card->wo_step_id && $this->requireWorkOrder()) {
+                throw new LedgerException('Pick the work order this gold is for. (Loose job cards are turned off in Settings → Gold rules.)');
+            }
 
-            return $this->ops->issue($card, $data['items'], $data['source'], $this->header($data));
+            return $this->ops->issue($card, $data['items'], $data['source'], $this->header($data, ['override_reason']));
         });
 
         return $this->posted($tx);
+    }
+
+    private function requireWorkOrder(): bool
+    {
+        return (bool) (app(\App\Support\Tenancy\TenantContext::class)->get()->settings['require_work_order'] ?? true);
+    }
+
+    /** Can this kaarigar take more gold? Shown on the issue screen before saving. */
+    public function issueCheck(Request $request): JsonResponse
+    {
+        $data = $request->validate(['kaarigar_id' => ['required', TenantRules::exists('kaarigars')]]);
+        $kaarigar = \App\Models\Kaarigar::findOrFail($data['kaarigar_id']);
+
+        return response()->json([
+            'blockers' => app(\App\Services\Metal\IssueRules::class)->blockers($kaarigar),
+            'can_override' => $request->user('staff')->can(\App\Support\Permissions::METAL_APPROVE_LOSS),
+            'held' => app(\App\Services\Metal\Ledger::class)->balance($this->ops->kaarigarLocation($kaarigar))['fine'],
+            'limit' => $kaarigar->max_fine_balance,
+        ]);
+    }
+
+    /** Staff record the kaarigar's signature on the printed issue slip (no app). */
+    public function acknowledge(MetalTransaction $transaction): JsonResponse
+    {
+        if ($transaction->type !== MetalTransaction::ISSUE || $transaction->isReversed()) {
+            throw new LedgerException('Only live gold issues can be acknowledged.');
+        }
+        if ($transaction->kaarigar_ack === 'accepted') {
+            return response()->json(['data' => $this->present($transaction)]);
+        }
+
+        $transaction->forceFill(['kaarigar_ack' => 'accepted', 'kaarigar_ack_at' => now()])->save();
+        activity('gold-issue')->performedOn($transaction)->causedBy(request()->user('staff'))->log("Signed slip recorded for {$transaction->voucher_no}");
+
+        return response()->json(['data' => $this->present($transaction->load(['lines.from', 'lines.to', 'lines.karat', 'kaarigar', 'retailer', 'jobCard']))]);
     }
 
     public function receive(Request $request): JsonResponse

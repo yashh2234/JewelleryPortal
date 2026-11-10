@@ -16,4 +16,9 @@ class DispatchLine extends Model
     {
         return $this->belongsTo(FinishedItem::class, 'finished_item_id');
     }
+
+    public function dispatch(): BelongsTo
+    {
+        return $this->belongsTo(Dispatch::class);
+    }
 }

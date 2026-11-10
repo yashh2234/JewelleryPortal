@@ -10,7 +10,8 @@ import TransactionsPage from './metal/TransactionsPage'
 import VaultPage from './metal/VaultPage'
 import WastagePage from './metal/WastagePage'
 import FinishedPage from './production/FinishedPage'
-import { DispatchesPage, HallmarkingPage, HallmarkLotPage } from './production/HallmarkPages'
+import { HallmarkingPage, HallmarkLotPage } from './production/HallmarkPages'
+import ShipmentsPage from './production/ShipmentsPage'
 import OrderDetailPage from './production/OrderDetailPage'
 import OrdersPage from './production/OrdersPage'
 import WorkOrderPage from './production/WorkOrderPage'
@@ -29,8 +30,14 @@ import Karats from './pages/Karats'
 import Processes from './pages/Processes'
 import Retailers from './pages/Retailers'
 import Users from './pages/Users'
+import AnalyticsPage from './pages/AnalyticsPage'
+import AuditPage from './pages/AuditPage'
+import GoldRules from './pages/GoldRules'
+import KaarigarProfile from './pages/KaarigarProfile'
+import RetailerProfilePage from './crm/RetailerProfilePage'
+import { QueriesPage, QueryPage } from './crm/QueriesPages'
 
-/** Manufacturer dashboard, mounted at /app/staff/*. */
+/** Manufacturer dashboard, mounted at /staff/*. */
 export default function StaffApp() {
   return (
     <Routes>
@@ -52,7 +59,7 @@ export default function StaffApp() {
         <Route path="finished" element={<FinishedPage />} />
         <Route path="hallmarking" element={<HallmarkingPage />} />
         <Route path="hallmarking/:id" element={<HallmarkLotPage />} />
-        <Route path="dispatches" element={<DispatchesPage />} />
+        <Route path="dispatches" element={<ShipmentsPage />} />
         <Route path="accounts/vouchers" element={<VouchersPage />} />
         <Route path="accounts/bill/:id" element={<BillPage />} />
         <Route path="accounts/parties" element={<PartiesPage />} />
@@ -60,9 +67,17 @@ export default function StaffApp() {
         <Route path="accounts/reports" element={<ReportsPage />} />
         <Route path="accounts/settings" element={<AccountSettingsPage />} />
         <Route path="kaarigars" element={<Kaarigars />} />
+        <Route path="kaarigars/:id" element={<KaarigarProfile />} />
         <Route path="kaarigars/:id/ledger" element={<KaarigarLedgerPage />} />
         <Route path="designs" element={<Designs />} />
         <Route path="retailers" element={<Retailers />} />
+        <Route path="retailers/:id" element={<RetailerProfilePage />} />
+        <Route path="queries" element={<QueriesPage />} />
+        <Route path="queries/:id" element={<QueryPage />} />
+        <Route path="reports" element={<AnalyticsPage />} />
+        <Route path="reports/:name" element={<AnalyticsPage />} />
+        <Route path="audit" element={<AuditPage />} />
+        <Route path="settings/gold-rules" element={<GoldRules />} />
         <Route path="settings/karats" element={<Karats />} />
         <Route path="settings/processes" element={<Processes />} />
         <Route path="settings/gold-rates" element={<GoldRates />} />

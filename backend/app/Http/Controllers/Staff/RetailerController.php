@@ -21,7 +21,8 @@ class RetailerController extends Controller
     public function index(Request $request): JsonResponse
     {
         $retailers = Retailer::query()
-            ->with('makingSlab:id,name')
+            ->with(['makingSlab:id,name', 'salesperson:id,name'])
+            ->when($request->filled('salesperson_id'), fn ($q) => $q->where('salesperson_id', $request->integer('salesperson_id')))
             ->withCount('users')
             ->when($request->filled('status'), fn ($q) => $q->where('status', $request->string('status')))
             ->when($request->filled('search'), fn ($q) => $q->where(fn ($q) => $q
@@ -37,7 +38,16 @@ class RetailerController extends Controller
 
     public function show(Retailer $retailer): JsonResponse
     {
-        return response()->json(['data' => $retailer->load(['users', 'makingSlab'])]);
+        return response()->json(['data' => $retailer->load(['users', 'makingSlab', 'collections:id,name'])]);
+    }
+
+    /** Which catalogue collections this retailer sees on the portal (empty = everything published). */
+    public function collections(Request $request, Retailer $retailer): JsonResponse
+    {
+        $data = $request->validate(['collection_ids' => ['present', 'array'], 'collection_ids.*' => [TenantRules::exists('collections')]]);
+        $retailer->collections()->sync($data['collection_ids']);
+
+        return response()->json(['data' => $retailer->load('collections:id,name')]);
     }
 
     /** Created by the manufacturer: active straight away, with an owner login. */
@@ -125,6 +135,9 @@ class RetailerController extends Controller
             'credit_limit' => ['sometimes', 'decimal:0,2', 'min:0'],
             'making_slab_id' => ['nullable', TenantRules::exists('making_slabs')],
             'metal_account_enabled' => ['sometimes', 'boolean'],
+            'hallmark_mandatory' => ['sometimes', 'boolean'],
+            'salesperson_id' => ['nullable', TenantRules::exists('users')],
+            'payment_terms_days' => ['nullable', 'integer', 'min:0', 'max:365'],
         ];
     }
 
@@ -132,7 +145,8 @@ class RetailerController extends Controller
     {
         $fields = Arr::only($data, [
             'shop_name', 'contact_name', 'gstin', 'city', 'address', 'phone', 'email',
-            'credit_limit', 'making_slab_id', 'metal_account_enabled',
+            'credit_limit', 'making_slab_id', 'metal_account_enabled', 'hallmark_mandatory',
+            'salesperson_id', 'payment_terms_days',
         ]);
 
         if (array_key_exists('gstin', $fields)) {

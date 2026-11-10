@@ -77,6 +77,39 @@ class UnifiedLoginTest extends TestCase
         $this->getJson($this->on($this->tenant, 'api/auth/me'))->assertJsonPath('type', 'kaarigar');
     }
 
+    /** One mobile box for everyone: the number decides staff / retailer / kaarigar. */
+    public function test_mobile_otp_works_for_staff_and_retailers_too(): void
+    {
+        $sms = new class implements SmsSender {
+            public array $codes = [];
+
+            public function sendOtp(string $phone, string $code): void
+            {
+                $this->codes[$phone] = $code;
+            }
+        };
+        $this->app->instance(SmsSender::class, $sms);
+
+        $this->asTenant($this->tenant, function () {
+            \App\Models\User::role('owner')->first()->update(['phone' => '+91 98765 00010']);
+            \App\Models\RetailerUser::where('email', 'shop@sharma.test')->update(['phone' => '9822000000']);
+        });
+
+        foreach ([['098765 00010', 'staff'], ['9822000000', 'retailer'], ['9876500001', 'kaarigar']] as [$typed, $type]) {
+            $this->fromSpa($this->tenant)->postJson($this->on($this->tenant, 'api/auth/otp'), ['phone' => $typed])->assertOk();
+            $digits = substr(preg_replace('/\D/', '', $typed), -10);
+            $this->fromSpa($this->tenant)->postJson($this->on($this->tenant, 'api/auth/otp/verify'), ['phone' => $typed, 'otp' => $sms->codes[$digits]])
+                ->assertOk()->assertJsonPath('type', $type);
+        }
+
+        // Unknown numbers: same answer, no SMS.
+        $this->fromSpa($this->tenant)->postJson($this->on($this->tenant, 'api/auth/otp'), ['phone' => '9000000000'])->assertOk();
+        $this->assertArrayNotHasKey('9000000000', $sms->codes);
+
+        $this->fromSpa($this->tenant)->postJson($this->on($this->tenant, 'api/auth/otp'), ['phone' => '12345'])
+            ->assertUnprocessable()->assertJsonValidationErrors('phone');
+    }
+
     public function test_signing_in_as_one_type_signs_out_the_other(): void
     {
         $this->login(['email' => 'owner@acme.test', 'password' => 'password'])->assertOk();

@@ -4,13 +4,14 @@ namespace App\Models;
 
 use App\Models\Concerns\Audited;
 use App\Models\Concerns\BelongsToTenant;
+use App\Models\Concerns\NormalisesPhone;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 
 /** Kaarigar app login (phone + OTP, "kaarigar" guard). */
 class KaarigarUser extends Authenticatable
 {
-    use Audited, BelongsToTenant;
+    use Audited, BelongsToTenant, NormalisesPhone;
 
     protected $attributes = ['is_active' => true, 'is_master' => true, 'language' => 'hi', 'otp_attempts' => 0, 'remember_token' => null];
 

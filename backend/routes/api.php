@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\NotificationController;
 use App\Http\Controllers\Auth\PasswordResetController;
 use App\Http\Controllers\Auth\PushSubscriptionController;
 use App\Http\Controllers\Auth\SessionController;
@@ -67,9 +68,14 @@ Route::middleware('tenant')->group(function () {
     Route::prefix('v1')->group(function () {
         Route::middleware(['auth:staff', 'tenant.member:staff', 'workspace.writable', 'idempotent'])->group(function () {
             Route::get('auth/me', [StaffAuth::class, 'me']);
+            Route::get('dashboard', Staff\DashboardController::class);
+            Route::get('notifications', [NotificationController::class, 'index'])->defaults('guard', 'staff');
+            Route::post('notifications/read', [NotificationController::class, 'read'])->defaults('guard', 'staff');
 
             // Reference data any staff user can read (pickers, dropdowns).
             Route::get('karats', [Staff\KaratController::class, 'index']);
+            // Names only, for "assigned to" / "salesperson" pickers.
+            Route::get('staff-directory', fn () => response()->json(['data' => \App\Models\User::where('is_active', true)->orderBy('name')->get(['id', 'name'])]));
             Route::get('processes', [Staff\ProcessController::class, 'index']);
             Route::get('categories', [Staff\CategoryController::class, 'index']);
             Route::get('collections', [Staff\CollectionController::class, 'index']);
@@ -118,6 +124,17 @@ Route::middleware('tenant')->group(function () {
                 Route::post('retailers/{retailer}/reject', [Staff\RetailerController::class, 'reject']);
                 Route::post('retailers/{retailer}/suspend', [Staff\RetailerController::class, 'suspend']);
                 Route::put('retailers/{retailer}/collections', [Staff\RetailerController::class, 'collections']);
+
+                // CRM: profile, communication log, follow-ups, retailer queries.
+                Route::get('crm/retailers/{retailer}', [Staff\CrmController::class, 'profile']);
+                Route::post('crm/retailers/{retailer}/notes', [Staff\CrmController::class, 'addNote']);
+                Route::delete('crm/retailers/{retailer}/notes/{note}', [Staff\CrmController::class, 'deleteNote']);
+                Route::post('crm/retailers/{retailer}/notes/{note}/done', [Staff\CrmController::class, 'followUpDone']);
+                Route::get('crm/follow-ups', [Staff\CrmController::class, 'followUps']);
+                Route::get('queries', [Staff\QueryController::class, 'index']);
+                Route::get('queries/{query}', [Staff\QueryController::class, 'show']);
+                Route::post('queries/{query}/reply', [Staff\QueryController::class, 'reply']);
+                Route::post('queries/{query}/status', [Staff\QueryController::class, 'setStatus']);
             });
 
             // ── Gold ledger (Module 1) ───────────────────────────────────────
@@ -140,6 +157,8 @@ Route::middleware('tenant')->group(function () {
             Route::middleware('permission:'.P::METAL_ISSUE)->group(function () {
                 Route::post('job-cards', [Staff\JobCardController::class, 'store']);
                 Route::post('metal/issue', [Staff\MetalController::class, 'issue']);
+                Route::get('metal/issue-check', [Staff\MetalController::class, 'issueCheck']);
+                Route::post('metal/transactions/{transaction}/acknowledge', [Staff\MetalController::class, 'acknowledge']);
             });
 
             Route::middleware('permission:'.P::METAL_RECEIVE)->group(function () {
@@ -165,8 +184,11 @@ Route::middleware('tenant')->group(function () {
                 ->middleware('permission:'.P::METAL_APPROVE_LOSS);
 
             // ── Orders, production, hallmarking, dispatch (Modules 2 & 6) ─────
-            Route::middleware('permission:'.P::ORDERS_MANAGE.'|'.P::PRODUCTION_MANAGE.'|'.P::REPORTS_VIEW)->group(function () {
+            Route::middleware('permission:'.implode('|', [P::ORDERS_MANAGE, P::ORDERS_APPROVE, P::PRODUCTION_MANAGE, P::QC_MANAGE, P::DISPATCH_MANAGE, P::METAL_ISSUE, P::REPORTS_VIEW]))->group(function () {
                 Route::get('orders', [Staff\OrderController::class, 'index']);
+                Route::get('finished-items/{item}/history', [Staff\FinishedGoodsController::class, 'history']);
+                Route::get('couriers', [Staff\FinishedGoodsController::class, 'couriers']);
+                Route::get('dispatches/{dispatch}/documents/{attachment}', [Staff\FinishedGoodsController::class, 'document']);
                 Route::get('orders/{order}', [Staff\OrderController::class, 'show']);
                 Route::get('work-orders', [Staff\WorkOrderController::class, 'index']);
                 Route::get('work-orders/board', [Staff\WorkOrderController::class, 'board']);
@@ -182,22 +204,46 @@ Route::middleware('tenant')->group(function () {
 
             Route::middleware('permission:'.P::ORDERS_MANAGE)->group(function () {
                 Route::post('orders', [Staff\OrderController::class, 'store']);
-                Route::post('orders/{order}/confirm', [Staff\OrderController::class, 'confirm']);
+                Route::post('orders/{order}/submit', [Staff\OrderController::class, 'submit']);
                 Route::post('orders/{order}/hold', [Staff\OrderController::class, 'hold']);
                 Route::post('orders/{order}/resume', [Staff\OrderController::class, 'resume']);
-                Route::post('orders/{order}/cancel', [Staff\OrderController::class, 'cancel']);
-                Route::post('dispatches', [Staff\FinishedGoodsController::class, 'dispatch']);
             });
+
+            // Order manager: approve, cancel, close (spec §13).
+            Route::middleware('permission:'.P::ORDERS_APPROVE)->group(function () {
+                Route::post('orders/{order}/approve', [Staff\OrderController::class, 'approve']);
+                Route::post('orders/{order}/confirm', [Staff\OrderController::class, 'confirm']);
+                Route::post('orders/{order}/cancel', [Staff\OrderController::class, 'cancel']);
+                Route::post('orders/{order}/close', [Staff\OrderController::class, 'close']);
+            });
+
+            Route::post('orders/{order}/advance', [Staff\OrderController::class, 'advance'])
+                ->middleware('permission:'.P::ORDERS_MANAGE.'|'.P::ACCOUNTS_MANAGE);
+
+            // Dispatch manager: packing, challans, shipment tracking.
+            Route::middleware('permission:'.P::DISPATCH_MANAGE)->group(function () {
+                Route::post('dispatches', [Staff\FinishedGoodsController::class, 'dispatch']);
+                Route::patch('dispatches/{dispatch}/shipment', [Staff\FinishedGoodsController::class, 'updateShipment']);
+                Route::post('dispatches/{dispatch}/documents', [Staff\FinishedGoodsController::class, 'uploadDocument']);
+            });
+
+            // Quality manager: QC and rework.
+            Route::middleware('permission:'.P::QC_MANAGE)->group(function () {
+                Route::post('finished-items/qc', [Staff\FinishedGoodsController::class, 'qc']);
+                Route::post('finished-items/rework', [Staff\FinishedGoodsController::class, 'rework']);
+            });
+
+            Route::post('finished-items/location', [Staff\FinishedGoodsController::class, 'location'])
+                ->middleware('permission:'.P::QC_MANAGE.'|'.P::DISPATCH_MANAGE.'|'.P::PRODUCTION_MANAGE);
 
             Route::middleware('permission:'.P::PRODUCTION_MANAGE)->group(function () {
                 Route::post('orders/{order}/work-orders', [Staff\OrderController::class, 'workOrders']);
                 Route::post('work-orders', [Staff\WorkOrderController::class, 'store']);
                 Route::post('work-orders/{workOrder}/steps/{step}/advance', [Staff\WorkOrderController::class, 'advance']);
+                Route::patch('work-orders/{workOrder}/steps/{step}', [Staff\WorkOrderController::class, 'updateStep']);
                 Route::post('work-orders/{workOrder}/finish', [Staff\WorkOrderController::class, 'finish']);
                 Route::post('work-orders/{workOrder}/complete', [Staff\WorkOrderController::class, 'complete']);
                 Route::post('work-orders/{workOrder}/cancel', [Staff\WorkOrderController::class, 'cancel']);
-                Route::post('finished-items/qc', [Staff\FinishedGoodsController::class, 'qc']);
-                Route::post('finished-items/rework', [Staff\FinishedGoodsController::class, 'rework']);
                 Route::post('ahcs', [Staff\FinishedGoodsController::class, 'saveAhc']);
                 Route::patch('ahcs/{ahc}', [Staff\FinishedGoodsController::class, 'saveAhc']);
                 Route::post('hallmark-lots', [Staff\FinishedGoodsController::class, 'createLot']);
@@ -248,6 +294,13 @@ Route::middleware('tenant')->group(function () {
                 Route::post('financial-years/{financialYear}/lock', [Staff\AccountingController::class, 'lock']);
             });
 
+            // Reports & analytics (spec §12) and the audit trail (spec §14).
+            Route::middleware('permission:'.P::REPORTS_VIEW)->group(function () {
+                Route::get('reports', [Staff\ReportController::class, 'index']);
+                Route::get('reports/{name}', [Staff\ReportController::class, 'show']);
+            });
+            Route::get('audit', [Staff\AuditController::class, 'index'])->middleware('permission:'.P::AUDIT_VIEW);
+
             Route::middleware('permission:'.P::USERS_MANAGE)->group(function () {
                 Route::apiResource('users', Staff\UserController::class)->only(['index', 'store', 'update']);
                 Route::apiResource('roles', Staff\RoleController::class)->only(['index', 'store', 'update']);
@@ -273,6 +326,17 @@ Route::middleware('tenant')->group(function () {
             Route::post('orders', [Portal\OrderController::class, 'store']);
             Route::get('orders/{order}', [Portal\OrderController::class, 'show']);
             Route::post('orders/{order}/reorder', [Portal\OrderController::class, 'reorder']);
+            Route::post('orders/{order}/lines/{line}', [Portal\OrderController::class, 'updateLine']);   // multipart (reference photo)
+            Route::get('dispatches/{dispatch}/documents/{attachment}', [Portal\OrderController::class, 'document']);
+            Route::post('wishlist/{design}', [Portal\CatalogueController::class, 'wishlist']);
+            Route::delete('wishlist/{design}', [Portal\CatalogueController::class, 'unwishlist']);
+            Route::get('statement.pdf', [Portal\AccountController::class, 'statement']);
+            Route::get('queries', [Portal\QueryController::class, 'index']);
+            Route::post('queries', [Portal\QueryController::class, 'store']);
+            Route::get('queries/{query}', [Portal\QueryController::class, 'show']);
+            Route::post('queries/{query}/reply', [Portal\QueryController::class, 'reply']);
+            Route::get('notifications', [NotificationController::class, 'index'])->defaults('guard', 'retailer');
+            Route::post('notifications/read', [NotificationController::class, 'read'])->defaults('guard', 'retailer');
             Route::get('account', [Portal\AccountController::class, 'show']);
             Route::get('invoices/{voucher}/pdf', [Portal\AccountController::class, 'invoicePdf']);
             Route::get('challans/{dispatch}/pdf', [Portal\AccountController::class, 'challanPdf']);
@@ -297,6 +361,8 @@ Route::middleware('tenant')->group(function () {
             Route::get('requests', [KaarigarApp::class, 'requests']);
             Route::get('khata', [KaarigarApp::class, 'khata']);
             Route::get('earnings', [KaarigarApp::class, 'earnings']);
+            Route::get('notifications', [NotificationController::class, 'index'])->defaults('guard', 'kaarigar');
+            Route::post('notifications/read', [NotificationController::class, 'read'])->defaults('guard', 'kaarigar');
         });
     });
 });

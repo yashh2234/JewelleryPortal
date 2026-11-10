@@ -169,20 +169,22 @@ class MastersTest extends TestCase
 
     public function test_manifest_and_spa_are_branded_per_tenant(): void
     {
-        $this->get($this->on($this->tenant, 'manifest/app.webmanifest'))
+        $this->get($this->on($this->tenant, 'manifest.webmanifest'))
             ->assertOk()
             ->assertJsonPath('name', 'Acme Gold')
-            ->assertJsonPath('scope', '/app/');
+            ->assertJsonPath('scope', '/');
 
         $public = sys_get_temp_dir().'/spa-test-'.uniqid();
-        mkdir("{$public}/app", 0777, true);
-        file_put_contents("{$public}/app/index.html", '<html><head><title>x</title></head><body></body></html>');
+        mkdir($public, 0777, true);
+        file_put_contents("{$public}/app.html", '<html><head><title>x</title></head><body></body></html>');
         $this->app->usePublicPath($public);
 
-        $this->get($this->on($this->tenant, 'app/kaarigar/khata'))
+        $this->get($this->on($this->tenant, 'kaarigar/khata'))
             ->assertOk()
             ->assertSee('window.__BOOT__', false)
-            ->assertSee('"subdomain":"acme"', false)
-            ->assertSee('"app":"app"', false);
+            ->assertSee('"subdomain":"acme"', false);
+
+        // API, Sanctum and storage paths never fall through to the app page.
+        $this->getJson($this->on($this->tenant, 'api/nope'))->assertNotFound();
     }
 }

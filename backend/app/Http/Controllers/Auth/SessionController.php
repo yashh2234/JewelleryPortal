@@ -7,7 +7,7 @@ use App\Models\KaarigarUser;
 use App\Models\Retailer;
 use App\Models\RetailerUser;
 use App\Models\User;
-use App\Services\Auth\KaarigarOtp;
+use App\Services\Auth\LoginOtp;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -19,7 +19,7 @@ use Illuminate\Validation\ValidationException;
  * the matching guard; the front end then shows that person's dashboard.
  *
  *   email + password  → staff (manufacturer app), else retailer (portal)
- *   mobile + OTP      → kaarigar
+ *   mobile + OTP      → whoever owns that number: staff, retailer or kaarigar
  *
  * The three guards stay separate underneath, so each API group still only accepts
  * its own kind of user.
@@ -28,7 +28,7 @@ class SessionController extends Controller
 {
     public const GUARDS = ['staff', 'retailer', 'kaarigar'];
 
-    public function __construct(private KaarigarOtp $otp) {}
+    public function __construct(private LoginOtp $otp) {}
 
     public function login(Request $request): JsonResponse
     {
@@ -70,9 +70,9 @@ class SessionController extends Controller
 
     public function requestOtp(Request $request): JsonResponse
     {
-        $data = $request->validate(['phone' => ['required', 'string', 'regex:/^[6-9]\d{9}$/']]);
+        $phone = $this->phone($request);
 
-        $code = $this->otp->send($data['phone']);
+        $code = $this->otp->send($phone);
 
         // Same answer whether or not the number exists, so numbers can't be probed.
         $response = ['message' => 'If this number is registered, an OTP has been sent.'];
@@ -86,22 +86,34 @@ class SessionController extends Controller
 
     public function verifyOtp(Request $request): JsonResponse
     {
-        $data = $request->validate([
-            'phone' => ['required', 'string', 'regex:/^[6-9]\d{9}$/'],
-            'otp' => ['required', 'digits:6'],
-        ]);
+        $phone = $this->phone($request);
+        $otp = $request->validate(['otp' => ['required', 'digits:6']])['otp'];
 
-        $user = $this->otp->verify($data['phone'], $data['otp']);
+        $account = $this->otp->verify($phone, $otp);
 
-        if (! $user) {
+        if (! $account) {
             throw ValidationException::withMessages(['otp' => 'The OTP is wrong or has expired.']);
         }
 
-        $this->logoutOthers('kaarigar');
-        Auth::guard('kaarigar')->login($user, remember: true);
+        [$guard, $user] = $account;
+        $this->logoutOthers($guard);
+        Auth::guard($guard)->login($user, remember: true);
         $request->session()->regenerate();
 
-        return response()->json($this->payload('kaarigar', $user));
+        return response()->json($this->payload($guard, $user));
+    }
+
+    /** Accept "+91 98765 43210", "09876543210", "9876543210". */
+    private function phone(Request $request): string
+    {
+        $request->validate(['phone' => ['required', 'string', 'max:20']]);
+        $phone = LoginOtp::normalise((string) $request->input('phone'));
+
+        if (! $phone) {
+            throw ValidationException::withMessages(['phone' => 'Enter a 10-digit mobile number.']);
+        }
+
+        return $phone;
     }
 
     /** Who is signed in on this device: {type, user}, or 401. */

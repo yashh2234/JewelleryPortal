@@ -3,48 +3,75 @@
 /* Shared components live in this package; let Tailwind scan them from every app. */
 @source "./";
 
+/* Theme is chosen by `data-theme` on <html> (light | dark), falling back to the OS. */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
 /*
  * Theme tokens (shadcn-style). --brand is overridden at runtime with the tenant's
- * primary colour, so each manufacturer's apps carry their own colour.
+ * primary colour, so each manufacturer's apps carry their own colour. Everything
+ * else derives from it, so any tenant colour works in both themes.
  */
 :root {
+  color-scheme: light;
   --brand: #7c5c1e;
   --brand-foreground: #ffffff;
-  --background: #fafaf9;
-  --foreground: #1c1917;
+  /* What the UI actually paints with: equals --brand in light mode, lifted in dark. */
+  --accent: var(--brand);
+  --accent-foreground: var(--brand-foreground);
+
+  --background: #f7f6f3;
+  --foreground: #1a1714;
   --card: #ffffff;
-  --muted: #f5f5f4;
-  --muted-foreground: #78716c;
-  --border: #e7e5e4;
-  --input: #d6d3d1;
-  --ring: var(--brand);
-  --danger: #b91c1c;
-  --success: #15803d;
-  --warning: #b45309;
-  --radius: 0.625rem;
+  --elevated: #ffffff;
+  --muted: #f1efeb;
+  --muted-foreground: #6f6860;
+  --border: #e6e2db;
+  --input: #d9d4cb;
+  --ring: var(--accent);
+  --danger: #c0262d;
+  --success: #17803d;
+  --warning: #b25e09;
+  --radius: 0.75rem;
+
+  --shadow-xs: 0 1px 2px rgb(28 25 23 / 0.04);
+  --shadow-card: 0 1px 2px rgb(28 25 23 / 0.04), 0 1px 3px rgb(28 25 23 / 0.04);
+  --shadow-raised: 0 2px 4px rgb(28 25 23 / 0.04), 0 8px 24px -6px rgb(28 25 23 / 0.10);
+  --shadow-pop: 0 4px 8px rgb(28 25 23 / 0.06), 0 20px 48px -12px rgb(28 25 23 / 0.22);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    --background: #0c0a09;
-    --foreground: #f5f5f4;
-    --card: #1c1917;
-    --muted: #292524;
-    --muted-foreground: #a8a29e;
-    --border: #292524;
-    --input: #44403c;
-    --danger: #f87171;
-    --success: #4ade80;
-    --warning: #fbbf24;
-  }
+/*
+ * Dark: deep warm charcoal; the brand colour is lifted towards gold so it reads on
+ * black. index.html always sets data-theme before first paint (from the saved
+ * choice, or the OS setting), so there is no flash.
+ */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --accent: color-mix(in oklab, var(--brand) 62%, #f3dfae);
+  --accent-foreground: #17120a;
+  --background: #0e0d0b;
+  --foreground: #f2efea;
+  --card: #171513;
+  --elevated: #1e1b18;
+  --muted: #24211d;
+  --muted-foreground: #a39b90;
+  --border: #2c2824;
+  --input: #3a352f;
+  --danger: #f2777a;
+  --success: #4fd17f;
+  --warning: #f4b44a;
+  --shadow-xs: 0 1px 2px rgb(0 0 0 / 0.3);
+  --shadow-card: 0 1px 2px rgb(0 0 0 / 0.35), inset 0 1px 0 rgb(255 255 255 / 0.03);
+  --shadow-raised: 0 2px 6px rgb(0 0 0 / 0.35), 0 12px 32px -8px rgb(0 0 0 / 0.5), inset 0 1px 0 rgb(255 255 255 / 0.04);
+  --shadow-pop: 0 8px 16px rgb(0 0 0 / 0.4), 0 24px 64px -12px rgb(0 0 0 / 0.7), inset 0 1px 0 rgb(255 255 255 / 0.05);
 }
 
 @theme inline {
-  --color-brand: var(--brand);
-  --color-brand-foreground: var(--brand-foreground);
+  --color-brand: var(--accent);
+  --color-brand-foreground: var(--accent-foreground);
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
+  --color-elevated: var(--elevated);
   --color-muted: var(--muted);
   --color-muted-foreground: var(--muted-foreground);
   --color-border: var(--border);
@@ -53,10 +80,16 @@
   --color-danger: var(--danger);
   --color-success: var(--success);
   --color-warning: var(--warning);
+  --radius-xl: calc(var(--radius) + 4px);
   --radius-lg: var(--radius);
-  --radius-md: calc(var(--radius) - 2px);
-  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 3px);
+  --radius-sm: calc(var(--radius) - 6px);
+  --shadow-xs: var(--shadow-xs);
+  --shadow-card: var(--shadow-card);
+  --shadow-raised: var(--shadow-raised);
+  --shadow-pop: var(--shadow-pop);
   --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", "Noto Sans Devanagari", sans-serif;
+  --font-display: "Fraunces", ui-serif, Georgia, "Noto Serif Devanagari", serif;
 }
 
 @layer base {
@@ -65,15 +98,70 @@
   }
   html {
     -webkit-text-size-adjust: 100%;
+    -webkit-tap-highlight-color: transparent;
   }
   body {
     background: var(--background);
     color: var(--foreground);
     font-family: var(--font-sans);
+    font-feature-settings: "cv11", "ss01", "ss03";
     -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+  h1, h2, h3 {
+    letter-spacing: -0.011em;
+  }
+  ::selection {
+    background: color-mix(in oklab, var(--accent) 28%, transparent);
+  }
+  /* Thin, theme-aware scrollbars. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--input) transparent;
+  }
+  /* Smooth colour change when switching theme (added briefly by the toggle). */
+  html.theme-transition,
+  html.theme-transition *,
+  html.theme-transition *::before,
+  html.theme-transition *::after {
+    transition: background-color 200ms ease, border-color 200ms ease, color 200ms ease, fill 200ms ease !important;
   }
   /* Weights line up in columns. */
   .tabular {
     font-variant-numeric: tabular-nums;
   }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
+
+@utility font-display {
+  font-family: var(--font-display);
+  font-optical-sizing: auto;
+  letter-spacing: -0.02em;
+}
+
+/* Soft brand glow used behind sign-in and hero areas. */
+@utility bg-aura {
+  background-image:
+    radial-gradient(60rem 30rem at 50% -10%, color-mix(in oklab, var(--accent) 14%, transparent), transparent 70%),
+    radial-gradient(40rem 24rem at 100% 100%, color-mix(in oklab, var(--accent) 7%, transparent), transparent 70%);
+}
+
+/* Brand surface with a subtle sheen (kaarigar headers, avatars). */
+@utility bg-brand-sheen {
+  background-color: var(--accent);
+  background-image: linear-gradient(135deg, rgb(255 255 255 / 0.14), transparent 55%), linear-gradient(to bottom, transparent, rgb(0 0 0 / 0.08));
+}
+
+@keyframes fade-up {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+@utility animate-fade-up {
+  animation: fade-up 280ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
 }

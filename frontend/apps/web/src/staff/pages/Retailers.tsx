@@ -1,7 +1,9 @@
 import { Alert, api, ApiError, Badge, Button, Card, CardHeader, EmptyState, Field, Input, Select, Table, Td, rupees, type Paginated } from '@b2b/ui'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
+import { Link } from 'react-router'
 import { PageTitle } from '../layout'
+import RetailerSettings from './RetailerSettings'
 import type { Retailer } from '../types'
 
 const statusTone = { pending: 'warning', active: 'success', suspended: 'danger', rejected: 'neutral' } as const
@@ -11,6 +13,7 @@ export default function Retailers() {
   const qc = useQueryClient()
   const [status, setStatus] = useState('')
   const [adding, setAdding] = useState(false)
+  const [settings, setSettings] = useState<number | null>(null)
   const [form, setForm] = useState(empty)
 
   const list = useQuery({
@@ -65,16 +68,18 @@ export default function Retailers() {
         </Card>
       )}
 
+      {settings && <RetailerSettings key={settings} id={settings} onDone={() => setSettings(null)} />}
+
       <Card>
         {list.data?.data.length === 0 ? (
           <EmptyState title="No retailers here">Retailers can also sign up on your portal and wait for approval.</EmptyState>
         ) : (
-          <Table head={['Shop', 'City', 'GSTIN', 'Credit limit', 'Status', '']}>
+          <Table head={['Shop', 'City', 'Salesperson', 'Credit limit', 'Status', '']}>
             {list.data?.data.map((r) => (
               <tr key={r.id}>
-                <Td className="font-medium">{r.shop_name}<div className="text-xs text-muted-foreground">{r.contact_name}</div></Td>
+                <Td className="font-medium"><Link className="text-brand hover:underline" to={`/staff/retailers/${r.id}`}>{r.shop_name}</Link><div className="text-xs font-normal text-muted-foreground">{[r.contact_name, r.gstin].filter(Boolean).join(' · ')}</div></Td>
                 <Td>{r.city ?? '—'}</Td>
-                <Td className="tabular">{r.gstin ?? '—'}</Td>
+                <Td>{(r as { salesperson?: { name: string } | null }).salesperson?.name ?? '—'}</Td>
                 <Td className="tabular">{rupees(r.credit_limit)}</Td>
                 <Td><Badge tone={statusTone[r.status]} className="capitalize">{r.status}</Badge></Td>
                 <Td className="whitespace-nowrap text-right">
@@ -86,6 +91,8 @@ export default function Retailers() {
                   )}
                   {r.status === 'active' && <Button size="sm" variant="ghost" onClick={() => action.mutate({ id: r.id, act: 'suspend' })}>Suspend</Button>}
                   {r.status === 'suspended' && <Button size="sm" variant="ghost" onClick={() => action.mutate({ id: r.id, act: 'approve' })}>Reactivate</Button>}
+                  <Link to={`/staff/retailers/${r.id}`}><Button size="sm" variant="ghost">Profile</Button></Link>
+                  <Button size="sm" variant="ghost" onClick={() => setSettings(r.id)}>Settings</Button>
                 </Td>
               </tr>
             ))}

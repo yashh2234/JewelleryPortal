@@ -90,7 +90,7 @@ export function IssuesScreen() {
           ) : (
             <div className="grid grid-cols-2 border-t">
               <button className="flex h-16 items-center justify-center gap-2 text-lg font-semibold text-danger" onClick={() => setDisputing(i.id)}><X /> {t('dispute')}</button>
-              <button className="flex h-16 items-center justify-center gap-2 bg-success text-lg font-semibold text-white" onClick={() => act.mutate({ id: i.id, kind: 'accept' })}><Check /> {t('accept')}</button>
+              <button className="flex h-16 items-center justify-center gap-2 bg-success text-lg font-semibold text-white dark:text-[#04230f]" onClick={() => act.mutate({ id: i.id, kind: 'accept' })}><Check /> {t('accept')}</button>
             </div>
           )}
         </Card>

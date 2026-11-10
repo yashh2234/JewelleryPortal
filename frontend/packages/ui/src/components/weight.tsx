@@ -46,7 +46,7 @@ export const WeightInput = forwardRef<HTMLInputElement, Props>(({ value, onValue
             title="Read from scale"
             onClick={read}
             disabled={reading}
-            className="flex items-center rounded-r-md border border-l-0 border-input bg-muted px-2.5 text-muted-foreground hover:text-foreground disabled:opacity-50"
+            className="flex items-center rounded-r-lg border border-l-0 border-input bg-muted px-3 transition-colors text-muted-foreground hover:text-foreground disabled:opacity-50"
           >
             <Scale className={cn('size-4', reading && 'animate-pulse')} />
           </button>

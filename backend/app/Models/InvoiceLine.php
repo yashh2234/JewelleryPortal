@@ -24,4 +24,14 @@ class InvoiceLine extends Model
             'cgst' => 'decimal:2', 'sgst' => 'decimal:2', 'igst' => 'decimal:2', 'total' => 'decimal:2',
         ];
     }
+
+    public function voucher(): \Illuminate\Database\Eloquent\Relations\BelongsTo
+    {
+        return $this->belongsTo(Voucher::class);
+    }
+
+    public function finishedItem(): \Illuminate\Database\Eloquent\Relations\BelongsTo
+    {
+        return $this->belongsTo(FinishedItem::class);
+    }
 }

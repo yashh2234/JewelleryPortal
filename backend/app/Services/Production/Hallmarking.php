@@ -175,6 +175,8 @@ class Hallmarking
                 'charges' => $charges ?? bcmul((string) $lot->ahc->charge_per_piece, (string) $lot->items->count(), 2),
             ])->save();
 
+            app(OrderProgress::class)->forItems(\App\Models\FinishedItem::whereIn('id', $lot->items->pluck('finished_item_id'))->get());
+
             return $lot;
         });
     }

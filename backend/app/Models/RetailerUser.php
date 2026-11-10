@@ -4,13 +4,14 @@ namespace App\Models;
 
 use App\Models\Concerns\Audited;
 use App\Models\Concerns\BelongsToTenant;
+use App\Models\Concerns\NormalisesPhone;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 
 /** Retailer portal login ("retailer" guard). Never reaches manufacturer routes. */
 class RetailerUser extends Authenticatable
 {
-    use Audited, BelongsToTenant;
+    use Audited, BelongsToTenant, NormalisesPhone;
 
     protected $attributes = ['is_active' => true, 'role' => 'owner', 'remember_token' => null];
 

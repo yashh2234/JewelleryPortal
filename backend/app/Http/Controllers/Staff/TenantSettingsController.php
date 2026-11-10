@@ -33,7 +33,23 @@ class TenantSettingsController extends Controller
             'address' => ['nullable', 'string', 'max:500'],
             'primary_color' => ['sometimes', 'regex:/^#[0-9a-fA-F]{6}$/'],
             'logo' => ['sometimes', 'image', 'mimes:png,jpg,jpeg,webp', 'max:2048'],
+            'issue_rules' => ['sometimes', 'array'],
+            'issue_rules.*' => ['boolean'],
+            'require_work_order' => ['sometimes', 'boolean'],
         ]);
+
+        // Gold rules live in settings (JSON) next to the other workspace switches.
+        if (isset($data['issue_rules']) || array_key_exists('require_work_order', $data)) {
+            $settings = $tenant->settings ?? [];
+            if (isset($data['issue_rules'])) {
+                $settings['issue_rules'] = array_intersect_key(array_map('boolval', $data['issue_rules']), \App\Services\Metal\IssueRules::DEFAULTS) + ($settings['issue_rules'] ?? []);
+            }
+            if (array_key_exists('require_work_order', $data)) {
+                $settings['require_work_order'] = (bool) $data['require_work_order'];
+            }
+            $tenant->settings = $settings;
+            unset($data['issue_rules'], $data['require_work_order']);
+        }
 
         $fields = Arr::except($data, ['logo']);
         if (array_key_exists('gstin', $fields)) {

@@ -31,6 +31,8 @@ class GoldLedgerApiTest extends TestCase
     {
         parent::setUp();
         $this->tenant = $this->makeTenant('acme');
+        // These tests drive the ledger with loose job cards; the work-order rule has its own tests.
+        $this->tenant->update(['settings' => ['require_work_order' => false]]);
         $this->owner = $this->owner($this->tenant);
 
         [$this->ramesh, $this->rameshApp, $this->k22] = $this->asTenant($this->tenant, function () {

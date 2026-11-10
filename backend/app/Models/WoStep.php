@@ -18,7 +18,13 @@ class WoStep extends Model
 
     protected $attributes = ['status' => self::PENDING];
 
-    protected $fillable = ['work_order_id', 'process_id', 'sequence', 'status'];
+    protected $fillable = ['work_order_id', 'process_id', 'sequence', 'status', 'assigned_user_id', 'remarks'];
+
+    /** Staff member responsible for this stage (spec §5). */
+    public function assignee(): \Illuminate\Database\Eloquent\Relations\BelongsTo
+    {
+        return $this->belongsTo(User::class, 'assigned_user_id');
+    }
 
     protected function casts(): array
     {

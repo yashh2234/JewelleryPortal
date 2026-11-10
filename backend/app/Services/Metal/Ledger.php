@@ -190,12 +190,12 @@ class Ledger
     }
 
     /** Total fine per location type (vault, kaarigar, scrap…). */
-    public function totalsByType(?string $asOf = null): array
+    public function totalsByType(?string $asOf = null, ?int $karatId = null): array
     {
         $types = MetalLocation::pluck('type', 'id');
         $totals = [];
 
-        foreach ($this->balanceRows(null, $asOf) as $row) {
+        foreach ($this->balanceRows(null, $asOf, $karatId) as $row) {
             $type = $types[$row['location_id']] ?? 'unknown';
             $totals[$type] = Weight::add($totals[$type] ?? '0.000', $row['fine']);
         }

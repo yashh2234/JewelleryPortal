@@ -95,7 +95,7 @@ export default function Kaarigars() {
           <Table head={['Name', 'Mobile', 'Type', 'Gold in hand', 'App', 'Status', '']}>
             {list.data?.data.map((k) => (
               <tr key={k.id}>
-                <Td className="font-medium"><Link to={`/staff/kaarigars/${k.id}/ledger`} className="hover:underline">{k.name}</Link></Td>
+                <Td className="font-medium"><Link to={`/staff/kaarigars/${k.id}`} className="text-brand hover:underline">{k.name}</Link></Td>
                 <Td className="tabular">{k.phone ?? '—'}</Td>
                 <Td>{k.type === 'outside' ? 'Outside karkhana' : 'In-house'}</Td>
                 <Td className="tabular"><Link to={`/staff/kaarigars/${k.id}/ledger`} className="hover:underline">{balances.data?.[k.id] ?? '0.000'} g</Link></Td>

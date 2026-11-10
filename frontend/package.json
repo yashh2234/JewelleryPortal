@@ -9,9 +9,11 @@
   "scripts": {
     "dev": "npm run dev -w @b2b/web",
     "build": "npm run build -w @b2b/web",
-    "typecheck": "tsc -p apps/web"
+    "typecheck": "tsc -p apps/web",
+    "e2e": "playwright test"
   },
   "devDependencies": {
+    "@playwright/test": "^1.65.0",
     "@tailwindcss/vite": "^4.1.0",
     "@types/react": "^19.1.0",
     "@types/react-dom": "^19.1.0",

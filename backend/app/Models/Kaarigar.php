@@ -17,11 +17,11 @@ class Kaarigar extends Model
 
     protected $attributes = ['is_active' => true, 'type' => self::TYPE_IN_HOUSE];
 
-    protected $fillable = ['name', 'phone', 'type', 'address', 'is_active'];
+    protected $fillable = ['name', 'phone', 'type', 'address', 'is_active', 'max_fine_balance'];
 
     protected function casts(): array
     {
-        return ['is_active' => 'boolean'];
+        return ['is_active' => 'boolean', 'max_fine_balance' => 'decimal:3'];
     }
 
     public function appUsers(): HasMany

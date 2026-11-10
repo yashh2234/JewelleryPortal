@@ -13,11 +13,14 @@ class Design extends Model
 {
     use Audited, BelongsToTenant;
 
-    protected $attributes = ['is_published' => false];
+    public const AVAILABILITY = ['in_stock', 'made_to_order', 'unavailable'];
+
+    protected $attributes = ['is_published' => false, 'min_order_qty' => 1, 'availability' => 'made_to_order'];
 
     protected $fillable = [
         'code', 'name', 'category_id', 'approx_weight_min', 'approx_weight_max', 'sizes',
         'making_charge', 'making_type', 'description', 'is_published',
+        'stone_details', 'specifications', 'min_order_qty', 'production_days', 'availability',
     ];
 
     protected function casts(): array
@@ -28,6 +31,8 @@ class Design extends Model
             'making_charge' => 'decimal:3',
             'sizes' => 'array',
             'is_published' => 'boolean',
+            'min_order_qty' => 'integer',
+            'production_days' => 'integer',
         ];
     }
 

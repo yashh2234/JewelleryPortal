@@ -4,6 +4,7 @@ namespace App\Models;
 
 use App\Models\Concerns\Audited;
 use App\Models\Concerns\BelongsToTenant;
+use App\Models\Concerns\NormalisesPhone;
 use Database\Factories\UserFactory;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Foundation\Auth\User as Authenticatable;
@@ -14,7 +15,7 @@ use Spatie\Permission\Traits\HasRoles;
 class User extends Authenticatable
 {
     /** @use HasFactory<UserFactory> */
-    use Audited, BelongsToTenant, HasFactory, HasRoles, Notifiable;
+    use Audited, BelongsToTenant, NormalisesPhone, HasFactory, HasRoles, Notifiable;
 
     protected string $guard_name = 'staff';
 

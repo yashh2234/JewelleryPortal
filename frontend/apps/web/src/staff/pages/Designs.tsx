@@ -1,14 +1,16 @@
-import { Alert, api, ApiError, Badge, Button, Card, CardHeader, Checkbox, EmptyState, Field, Input, Select, grams, type Paginated } from '@b2b/ui'
+import { Alert, api, ApiError, Badge, Button, Card, CardHeader, Checkbox, EmptyState, Field, Input, Select, grams, type Paginated, Textarea } from '@b2b/ui'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ImageOff, Upload } from 'lucide-react'
 import { useState } from 'react'
 import { useCan } from '../auth'
 import { PageTitle } from '../layout'
+import DesignImport from './DesignImport'
 import type { Category, Design, Karat } from '../types'
 
 const empty = {
   code: '', name: '', category_id: '', approx_weight_min: '', approx_weight_max: '', sizes: '',
   making_charge: '', making_type: 'per_gram', karat_ids: [] as number[], is_published: false,
+  stone_details: '', specifications: '', min_order_qty: '1', production_days: '', availability: 'made_to_order',
 }
 
 export default function Designs() {
@@ -16,6 +18,7 @@ export default function Designs() {
   const can = useCan()
   const [search, setSearch] = useState('')
   const [editing, setEditing] = useState<Design | 'new' | null>(null)
+  const [importing, setImporting] = useState(false)
 
   const list = useQuery({
     queryKey: ['designs', search],
@@ -26,8 +29,11 @@ export default function Designs() {
     <>
       <PageTitle title="Designs">
         <Input className="w-56" placeholder="Search code or name" value={search} onChange={(e) => setSearch(e.target.value)} />
+        {can('designs.manage') && <Button variant="outline" onClick={() => setImporting(!importing)}>Bulk upload</Button>}
         {can('designs.manage') && <Button onClick={() => setEditing('new')}>Add design</Button>}
       </PageTitle>
+
+      {importing && <DesignImport onDone={() => setImporting(false)} />}
 
       {editing && (
         <DesignForm
@@ -91,6 +97,8 @@ function DesignForm({ designId, onDone }: { designId: number | null; onDone: () 
       approx_weight_min: d.approx_weight_min ?? '', approx_weight_max: d.approx_weight_max ?? '',
       sizes: (d.sizes ?? []).join(', '), making_charge: d.making_charge ?? '', making_type: d.making_type ?? 'per_gram',
       karat_ids: d.karats?.map((k) => k.id) ?? [], is_published: d.is_published,
+      stone_details: d.stone_details ?? '', specifications: d.specifications ?? '', min_order_qty: String(d.min_order_qty ?? 1),
+      production_days: d.production_days ? String(d.production_days) : '', availability: d.availability ?? 'made_to_order',
     })
   }
 
@@ -104,6 +112,10 @@ function DesignForm({ designId, onDone }: { designId: number | null; onDone: () 
         making_charge: form.making_charge || null,
         making_type: form.making_charge ? form.making_type : null,
         sizes: form.sizes.split(',').map((s) => s.trim()).filter(Boolean),
+        stone_details: form.stone_details || null,
+        specifications: form.specifications || null,
+        min_order_qty: Number(form.min_order_qty) || 1,
+        production_days: form.production_days ? Number(form.production_days) : null,
       }
       return designId ? api.patch(`/api/v1/designs/${designId}`, body) : api.post('/api/v1/designs', body)
     },
@@ -160,6 +172,17 @@ function DesignForm({ designId, onDone }: { designId: number | null; onDone: () 
           </Select>
         </Field>
         <Field label="Sizes" hint="Comma separated, e.g. 2.4, 2.6, 2.8" className="sm:col-span-2"><Input value={form.sizes} onChange={set('sizes')} /></Field>
+        <Field label="Minimum order qty" error={error?.field('min_order_qty')}><Input inputMode="numeric" value={form.min_order_qty} onChange={set('min_order_qty')} /></Field>
+        <Field label="Production time (days)" error={error?.field('production_days')}><Input inputMode="numeric" value={form.production_days} onChange={set('production_days')} /></Field>
+        <Field label="Availability">
+          <Select value={form.availability} onChange={set('availability')}>
+            <option value="made_to_order">Made to order</option>
+            <option value="in_stock">Ready stock</option>
+            <option value="unavailable">Not available</option>
+          </Select>
+        </Field>
+        <Field label="Stone details" hint="e.g. Kundan, 12 CZ 2 mm"><Input value={form.stone_details} onChange={set('stone_details')} /></Field>
+        <Field label="Design specifications" className="sm:col-span-full"><Textarea value={form.specifications} placeholder="Finish, clasp, hollow/solid, enamel…" onChange={set('specifications')} /></Field>
         <div className="sm:col-span-2">
           <p className="mb-1 text-sm font-medium">Karats available</p>
           <div className="flex flex-wrap gap-3">

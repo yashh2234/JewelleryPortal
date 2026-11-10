@@ -18,6 +18,7 @@ class PushTest extends TestCase
     public function test_new_issue_pushes_to_the_kaarigars_phone(): void
     {
         $tenant = $this->makeTenant('acme');
+        $tenant->update(['settings' => ['require_work_order' => false]]);
         [$kaarigar, $app, $k22, $process] = $this->asTenant($tenant, function () {
             $k = Kaarigar::create(['name' => 'Ramesh']);
 
@@ -61,6 +62,7 @@ class PushTest extends TestCase
     {
         Queue::fake();
         $tenant = $this->makeTenant('acme');
+        $tenant->update(['settings' => ['require_work_order' => false]]);
         [$kaarigar, $k22, $process] = $this->asTenant($tenant, fn () => [
             tap(Kaarigar::create(['name' => 'A']), fn ($k) => $k->appUsers()->create(['name' => 'A', 'phone' => '9876500001'])),
             Karat::where('label', '22K')->value('id'), Process::value('id'),

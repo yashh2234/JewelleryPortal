@@ -24,7 +24,7 @@ class TenancyTest extends TestCase
             'owner_name' => 'Owner',
             'owner_email' => 'Owner@Shree.test',
             'owner_password' => 'secret123',
-        ])->assertCreated()->assertJsonPath('app_url', 'http://shree.yourapp.test/app');
+        ])->assertCreated()->assertJsonPath('app_url', 'http://shree.yourapp.test/');
 
         $tenant = Tenant::where('subdomain', 'shree')->firstOrFail();
         $this->assertSame(Tenant::STATUS_TRIAL, $tenant->status);

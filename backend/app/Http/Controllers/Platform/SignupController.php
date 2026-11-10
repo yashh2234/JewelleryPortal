@@ -36,7 +36,7 @@ class SignupController extends Controller
 
         return response()->json([
             'tenant' => $tenant->only(['id', 'name', 'subdomain', 'status', 'trial_ends_at']),
-            'app_url' => "{$scheme}://{$tenant->subdomain}.{$central}/app",
+            'app_url' => "{$scheme}://{$tenant->subdomain}.{$central}/",
         ], 201);
     }
 }

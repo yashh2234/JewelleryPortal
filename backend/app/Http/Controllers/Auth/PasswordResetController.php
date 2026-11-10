@@ -44,7 +44,7 @@ class PasswordResetController extends Controller
                 'created_at' => now(),
             ]);
 
-            $url = sprintf('%s/app/reset?token=%s&email=%s', $request->getSchemeAndHttpHost(), $token, urlencode($email));
+            $url = sprintf('%s/reset?token=%s&email=%s', $request->getSchemeAndHttpHost(), $token, urlencode($email));
             Notification::route('mail', $email)->notify(new ResetPasswordLink($url, $this->context->get()->name, self::TTL_MINUTES));
         }
 

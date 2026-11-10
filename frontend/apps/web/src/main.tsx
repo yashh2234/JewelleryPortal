@@ -11,11 +11,15 @@ import { HOME, useSession, type SessionType } from './session'
 // downloads the staff screens.
 const StaffApp = lazy(() => import('./staff/StaffApp'))
 const KaarigarApp = lazy(() => import('./kaarigar/KaarigarApp'))
-const PortalHome = lazy(() => import('./portal/Home'))
+const PortalApp = lazy(() => import('./portal/PortalApp'))
 const Register = lazy(() => import('./portal/Register'))
 const AdminApp = lazy(() => import('./admin/AdminApp'))
 
-const Loading = () => <div className="grid min-h-dvh place-items-center text-muted-foreground">Loading…</div>
+const Loading = () => (
+  <div className="grid min-h-dvh place-items-center" role="status" aria-label="Loading">
+    <span className="size-7 animate-spin rounded-full border-[2.5px] border-brand/20 border-t-brand" />
+  </div>
+)
 const suspend = (node: ReactNode) => <Suspense fallback={<Loading />}>{node}</Suspense>
 
 /** Lets in only the right kind of user; everyone else goes to their own home or to login. */
@@ -44,16 +48,16 @@ const router = createBrowserRouter(
     { path: 'register', element: suspend(<Register />) },
     { path: 'staff/*', element: <Only type="staff"><StaffApp /></Only> },
     { path: 'kaarigar/*', element: <Only type="kaarigar"><KaarigarApp /></Only> },
-    { path: 'portal/*', element: <Only type="retailer"><PortalHome /></Only> },
+    { path: 'portal/*', element: <Only type="retailer"><PortalApp /></Only> },
     { path: '*', element: <Navigate to="/" replace /> },
   ],
-  { basename: '/app' },
+  { basename: '/' },
 )
 
 const queryClient = createQueryClient()
 
 // The super-admin console lives on the central domain and belongs to no workspace.
-const isAdmin = window.location.pathname.startsWith('/app/admin')
+const isAdmin = window.location.pathname.startsWith('/admin')
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

@@ -1,4 +1,4 @@
-import { Alert, api, ApiError, Button, Card, Field, Input, useTenant } from '@b2b/ui'
+import { Alert, api, ApiError, Button, Card, Field, Input, useTenant, ThemeToggle } from '@b2b/ui'
 import { useMutation } from '@tanstack/react-query'
 import { useState } from 'react'
 import { Link, useSearchParams } from 'react-router'
@@ -6,14 +6,15 @@ import { Link, useSearchParams } from 'react-router'
 function Shell({ title, children }: { title: string; children: React.ReactNode }) {
   const tenant = useTenant()
   return (
-    <div className="flex min-h-dvh items-center justify-center p-4">
-      <div className="w-full max-w-sm space-y-4">
+    <div className="bg-aura relative flex min-h-dvh items-center justify-center p-4">
+      <ThemeToggle className="absolute right-4 top-4" />
+      <div className="animate-fade-up w-full max-w-sm space-y-6">
         <div className="text-center">
-          <h1 className="text-xl font-semibold">{tenant.name}</h1>
-          <p className="text-sm text-muted-foreground">{title}</p>
+          <h1 className="font-display text-[1.75rem] font-semibold leading-tight">{tenant.name}</h1>
+          <p className="mt-1 text-sm text-muted-foreground">{title}</p>
         </div>
-        <Card className="p-5">{children}</Card>
-        <p className="text-center text-sm"><Link to="/login" className="text-brand hover:underline">Back to sign in</Link></p>
+        <Card className="p-6 shadow-raised">{children}</Card>
+        <p className="text-center text-sm"><Link to="/login" className="font-medium text-brand hover:underline">Back to sign in</Link></p>
       </div>
     </div>
   )

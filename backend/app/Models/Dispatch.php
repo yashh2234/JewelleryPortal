@@ -17,7 +17,15 @@ class Dispatch extends Model
 
     protected function casts(): array
     {
-        return ['gross_wt' => 'decimal:3', 'net_wt' => 'decimal:3', 'fine_wt' => 'decimal:3'];
+        return ['gross_wt' => 'decimal:3', 'net_wt' => 'decimal:3', 'fine_wt' => 'decimal:3', 'shipped_at' => 'datetime', 'delivered_at' => 'datetime'];
+    }
+
+    protected $attributes = ['shipment_status' => 'dispatched'];
+
+    /** Shipment documents: courier receipt, insurance, photos of the sealed parcel. */
+    public function documents(): \Illuminate\Database\Eloquent\Relations\MorphMany
+    {
+        return $this->morphMany(Attachment::class, 'attachable');
     }
 
     public function retailer(): BelongsTo

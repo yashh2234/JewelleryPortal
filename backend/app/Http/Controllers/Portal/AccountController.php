@@ -70,6 +70,19 @@ class AccountController extends Controller
             ->stream(str_replace('/', '-', $dispatch->challan_no).'.pdf');
     }
 
+    /** Account statement (money and metal) for a period, as a PDF. */
+    public function statement(Request $request, TenantContext $context, \App\Services\Accounting\Reports $reports): Response
+    {
+        $d = $request->validate(['from' => ['nullable', 'date'], 'to' => ['nullable', 'date', 'after_or_equal:from']]);
+        $retailer = $this->retailer($request);
+        $from = $d['from'] ?? today()->subMonthsNoOverflow(3)->toDateString();
+        $to = $d['to'] ?? today()->toDateString();
+        $ledger = $reports->partyLedger($this->books->party($retailer), $from, $to);
+
+        return Pdf::loadView('pdf.statement', ['l' => $ledger, 'retailer' => $retailer, 'tenant' => $context->get(), 'metal' => $retailer->metal_account_enabled])
+            ->download('statement-'.$from.'-to-'.$to.'.pdf');
+    }
+
     // ── Team: the shop owner adds staff logins ──────────────────────────────
 
     public function team(Request $request): JsonResponse

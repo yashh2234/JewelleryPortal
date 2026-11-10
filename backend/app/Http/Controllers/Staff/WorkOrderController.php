@@ -37,7 +37,7 @@ class WorkOrderController extends Controller
     public function show(WorkOrder $workOrder): JsonResponse
     {
         $workOrder->load([
-            'design.images', 'karat', 'steps.process', 'steps.jobCards.kaarigar', 'steps.jobCards.process', 'steps.jobCards.karat',
+            'design.images', 'karat', 'steps.process', 'steps.assignee:id,name', 'steps.jobCards.kaarigar', 'steps.jobCards.process', 'steps.jobCards.karat',
             'orderLines.order:id,order_no,retailer_id', 'orderLines.order.retailer:id,shop_name', 'finishedItems',
         ]);
 
@@ -49,6 +49,8 @@ class WorkOrderController extends Controller
                 'steps' => $workOrder->steps->map(fn (WoStep $s) => [
                     'id' => $s->id, 'sequence' => $s->sequence, 'status' => $s->status,
                     'process' => $s->process->only(['id', 'name']),
+                    'assignee' => $s->assignee?->only(['id', 'name']), 'remarks' => $s->remarks,
+                    'started_at' => $s->started_at, 'done_at' => $s->done_at,
                     'job_cards' => $s->jobCards->map(fn (JobCard $c) => MetalController::presentCard($c, $c->isOpen() ? $this->live($c) : null)),
                 ]),
             ],
@@ -124,11 +126,31 @@ class WorkOrderController extends Controller
             'items.*.purity' => ['nullable', 'decimal:0,3', 'gt:0', 'max:100'],
             'items.*.pieces' => ['nullable', 'integer', 'min:0'],
             'remarks' => ['nullable', 'string', 'max:500'],
+            'override_reason' => ['nullable', 'string', 'max:255'],
         ]);
 
-        $tx = $this->production->issueForStep(WoStep::findOrFail($data['step_id']), $data['kaarigar_id'], $data['items'], array_filter(['remarks' => $data['remarks'] ?? null]));
+        $tx = $this->production->issueForStep(WoStep::findOrFail($data['step_id']), $data['kaarigar_id'], $data['items'], array_filter([
+            'remarks' => $data['remarks'] ?? null, 'override_reason' => $data['override_reason'] ?? null,
+        ]));
 
         return response()->json(['data' => MetalController::present($tx->load(['lines.from', 'lines.to', 'lines.karat', 'kaarigar', 'jobCard']))], 201);
+    }
+
+    /** Who is responsible for a stage, and notes on it (spec §5). */
+    public function updateStep(Request $request, WorkOrder $workOrder, WoStep $step): JsonResponse
+    {
+        abort_unless($step->work_order_id === $workOrder->id, 404);
+        $data = $request->validate([
+            'assigned_user_id' => ['nullable', TenantRules::exists('users')],
+            'remarks' => ['nullable', 'string', 'max:1000'],
+        ]);
+        $step->update($data);
+
+        if (! empty($data['assigned_user_id'])) {
+            app(\App\Services\Push\Notify::class)->staffUser($data['assigned_user_id'], "Stage assigned: {$step->process->name}", "{$workOrder->wo_no}", "/staff/work-orders/{$workOrder->id}", 'wo.assigned');
+        }
+
+        return response()->json(['data' => $step->load('assignee:id,name')]);
     }
 
     public function advance(WorkOrder $workOrder, WoStep $step): JsonResponse
