@@ -7,7 +7,7 @@
 #   PHP         PHP 8.3 CLI (EasyApache path; `ls /opt/cpanel/` shows the installed versions)
 deployment:
   tasks:
-    - export DEPLOYPATH=$HOME/goldapp
+    - export DEPLOYPATH=/home2/namoteuj/jewelleryportal
     - export PHP=/opt/cpanel/ea-php83/root/usr/bin/php
     - /bin/mkdir -p $DEPLOYPATH
     # Code: mirror the branch, but never touch .env, uploaded files, logs or the storage link.
