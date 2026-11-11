@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Models\Design;
+use App\Models\Dispatch;
 use App\Models\FinancialYear;
 use App\Models\GoldRate;
 use App\Models\Kaarigar;
@@ -13,6 +14,7 @@ use App\Models\Party;
 use App\Models\Process;
 use App\Models\Retailer;
 use App\Models\Tenant;
+use App\Models\Voucher;
 use App\Services\Accounting\Books;
 use App\Services\Accounting\Invoicing;
 use App\Services\Accounting\Reports;
@@ -44,7 +46,7 @@ class AccountingTest extends TestCase
     }
 
     /** Make a dispatch of two 22K pieces (net 10.000 g and 12.000 g) to the retailer. */
-    private function dispatchTo(Retailer $retailer, string $stone = '0'): \App\Models\Dispatch
+    private function dispatchTo(Retailer $retailer, string $stone = '0'): Dispatch
     {
         $ops = app(MetalOperations::class);
         $prod = app(Production::class);
@@ -56,7 +58,7 @@ class AccountingTest extends TestCase
         $ledger->post('transfer', ['work_order_id' => $wo->id], [['from' => $ledger->vault(), 'to' => $ledger->workOrder($wo), 'karat' => $k22, 'gross' => '30']]);
         $items = $prod->finish($wo, [['gross' => '10', 'stone' => $stone], ['gross' => '12']]);
         foreach ($items as $i) {
-            $i->forceFill(['qc_status' => 'passed', 'huid' => 'HU000'.$i->id])->save();
+            $i->forceFill(['qc_status' => 'passed'])->save();
         }
 
         return app(Dispatching::class)->dispatch($retailer, collect($items)->pluck('id')->all(), null);
@@ -70,22 +72,22 @@ class AccountingTest extends TestCase
             $retailer = Retailer::create(['shop_name' => 'Sharma', 'status' => 'active', 'gstin' => '27ABCDE1234F1Z5', 'state_code' => '27']);
             $dispatch = $this->dispatchTo($retailer);
 
-            $preview = app(Invoicing::class)->preview($dispatch, ['hallmark_per_piece' => '45']);
-            // metal 22 g × 7200 = 158400; making from the default slab (rate 0) falls back to design ₹500/g = 11000; hallmark 90.
+            $preview = app(Invoicing::class)->preview($dispatch);
+            // metal 22 g × 7200 = 158400; making from the default slab (rate 0) falls back to design ₹500/g = 11000.
             $this->assertSame('158400.00', $preview['totals']['metal_value']);
             $this->assertSame('11000.00', $preview['totals']['making']);
-            $this->assertSame('169490.00', $preview['totals']['taxable']);
-            $this->assertSame('2542.36', $preview['totals']['cgst']);   // 1.5 %, rounded per line (1155.68 + 1386.68)
-            $this->assertSame('2542.36', $preview['totals']['sgst']);
+            $this->assertSame('169400.00', $preview['totals']['taxable']);
+            $this->assertSame('2541.00', $preview['totals']['cgst']);   // 1.5 %, per line (1155.00 + 1386.00)
+            $this->assertSame('2541.00', $preview['totals']['sgst']);
             $this->assertSame('0.00', $preview['totals']['igst']);
             $this->assertFalse($preview['inter_state']);
 
-            $v = app(Invoicing::class)->post($dispatch, ['hallmark_per_piece' => '45']);
+            $v = app(Invoicing::class)->post($dispatch);
             $this->assertStringStartsWith('INV/', $v->voucher_no);
             $this->assertSame($v->id, $dispatch->fresh()->invoice_voucher_id);
 
             $party = app(Books::class)->party($retailer);
-            $this->assertSame('174574.72', app(Books::class)->partyBalance($party)['money']);
+            $this->assertSame('174482.00', app(Books::class)->partyBalance($party)['money']);
 
             $this->expectException(LedgerException::class);
             app(Invoicing::class)->post($dispatch->fresh());
@@ -144,14 +146,14 @@ class AccountingTest extends TestCase
         });
     }
 
-    public function test_labour_bill_on_close_with_excess_wastage_recovered(): void
+    public function test_labour_bill_on_close_and_excess_recovered_only_on_approval(): void
     {
         $this->t(function () {
             $ops = app(MetalOperations::class);
             $k22 = Karat::where('label', '22K')->first();
             $k24 = Karat::where('label', '24K')->first();
             GoldRate::create(['date' => today()->toDateString(), 'karat_id' => $k24->id, 'rate_per_g' => '7800']);
-            $making = Process::where('name', 'Making')->first();
+            $making = Process::where('name', 'Soldering')->first();
             $ramesh = Kaarigar::create(['name' => 'Ramesh']);
             LabourRate::create(['process_id' => $making->id, 'basis' => 'per_gram', 'rate' => '150']);
 
@@ -161,16 +163,24 @@ class AccountingTest extends TestCase
             $ops->receive($card, ['gross' => '98.4', 'purity' => '100'], null, 'finished', []);
             $card = $ops->closeJobCard($card);   // 1.6 % loss, 0.600 g over the 1 % limit
 
-            $v = \App\Models\Voucher::find($card->labour_voucher_id);
+            $v = Voucher::find($card->labour_voucher_id);
             $this->assertSame('labour', $v->type);
             $this->assertSame('14760.00', $v->meta['labour']);       // 98.4 g × ₹150
-            $this->assertSame('4680.00', $v->meta['deduction']);     // 0.600 g × ₹7800
-            $this->assertSame('recovered', $card->excess_resolution);
+            $this->assertSame('0.00', $v->meta['deduction']);        // nothing deducted on its own
 
             $books = app(Books::class);
-            $this->assertSame('-10080.00', $books->partyBalance($books->party($ramesh))['money']);   // we owe him
-            // Gold: excess written off his balance because it was recovered in money.
-            $this->assertSame('0.000', app(Ledger::class)->balance(app(Ledger::class)->kaarigar($ramesh))['fine']);
+            $ledger = app(Ledger::class);
+            $this->assertSame('-14760.00', $books->partyBalance($books->party($ramesh))['money']);
+            // The whole difference stays on him until someone approves it.
+            $this->assertSame('pending', $card->loss_status);
+            $this->assertSame('1.600', $ledger->balance($ledger->kaarigar($ramesh))['fine']);
+
+            // Owner approves: the allowed part is written off, the excess recovered from labour.
+            $card = $ops->approveLoss($card, 'polishing_loss', 'Fine filigree, checked', recoverExcess: true);
+            $this->assertSame('recovered', $card->excess_resolution);
+            $this->assertSame('approved', $card->loss_status);
+            $this->assertSame('-10080.00', $books->partyBalance($books->party($ramesh))['money']);   // 14760 − 0.600 g × ₹7800
+            $this->assertSame('0.000', $ledger->balance($ledger->kaarigar($ramesh))['fine']);
 
             // Weekly payment.
             app(Vouchers::class)->payment($books->party($ramesh), '10080', 'cash', today()->toDateString(), 'Weekly');

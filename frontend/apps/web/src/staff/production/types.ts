@@ -144,13 +144,12 @@ export interface FinishedItem {
   net_wt: string
   purity_pct: string
   fine_wt: string
-  huid: string | null
   qc_status: 'pending' | 'passed' | 'failed'
   qc_remarks: string | null
   qc_defects?: string | null
   qc_checklist?: Record<string, boolean> | null
   storage_location?: string | null
-  status: 'in_stock' | 'at_ahc' | 'rework' | 'dispatched'
+  status: 'in_stock' | 'rework' | 'dispatched'
   karat_id: number
   order_line_id: number | null
   design?: { id: number; code: string; name: string }
@@ -170,21 +169,4 @@ export interface BoardCard extends WorkOrder {
   kaarigars: string[]
   with_kaarigar_fine: string
   alert: boolean
-}
-
-export interface Ahc { id: number; name: string; bis_recognition_no: string | null; city: string | null; charge_per_piece: string; is_active: boolean }
-
-export interface HallmarkLot {
-  id: number
-  lot_no: string
-  status: 'draft' | 'sent' | 'returned'
-  pieces: number
-  gross_wt: string
-  charges: string
-  manak_request_no: string | null
-  sent_at: string | null
-  returned_at: string | null
-  ahc: Ahc
-  karat: { id: number; label: string; purity_pct?: string }
-  items?: { id: number; finished_item_id: number; sent_wt: string; returned_wt: string | null; result: 'pass' | 'fail' | null; huid: string | null; remarks: string | null; finished_item: FinishedItem }[]
 }

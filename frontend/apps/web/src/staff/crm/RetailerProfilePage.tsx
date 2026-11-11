@@ -10,7 +10,7 @@ import { ORDER_STATUS, PAYMENT_STATUS, type OrderStatus } from '../production/ty
 interface Profile {
   retailer: {
     id: number; shop_name: string; contact_name: string | null; gstin: string | null; city: string | null; address: string | null; phone: string | null; email: string | null
-    status: string; credit_limit: string; payment_terms_days: number | null; metal_account_enabled: boolean; hallmark_mandatory: boolean
+    status: string; credit_limit: string; payment_terms_days: number | null; metal_account_enabled: boolean
     salesperson: { id: number; name: string; phone: string | null } | null
     making_slab: { id: number; name: string; basis: string; rate: string } | null
     users: { id: number; name: string; email: string; phone: string | null; role: string; is_active: boolean }[]

@@ -2,6 +2,8 @@
 
 namespace App\Providers;
 
+use App\Services\Push\PushSender;
+use App\Services\Push\WebPushSender;
 use App\Services\Sms\LogSmsSender;
 use App\Services\Sms\Msg91SmsSender;
 use App\Services\Sms\SmsSender;
@@ -21,9 +23,7 @@ class AppServiceProvider extends ServiceProvider
         // One tenant per request / job; reset between Octane requests and queued jobs.
         $this->app->scoped(TenantContext::class);
 
-        $this->app->bind(\App\Services\Push\PushSender::class, \App\Services\Push\WebPushSender::class);
-
-        $this->app->bind(\App\Services\Accounting\GspClient::class, \App\Services\Accounting\NullGspClient::class);
+        $this->app->bind(PushSender::class, WebPushSender::class);
 
         $this->app->bind(SmsSender::class, fn () => match (config('tenancy.sms_driver')) {
             'msg91' => new Msg91SmsSender((string) config('services.msg91.key'), (string) config('services.msg91.otp_template_id')),

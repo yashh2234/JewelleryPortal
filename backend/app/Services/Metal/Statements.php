@@ -2,13 +2,11 @@
 
 namespace App\Services\Metal;
 
-use App\Models\JobCard;
 use App\Models\Kaarigar;
 use App\Models\MetalTransactionLine;
 use App\Support\Metal\Weight;
-use Illuminate\Support\Facades\DB;
 
-/** Kaarigar khata (statement) and wastage reports, all derived from ledger lines. */
+/** Kaarigar khata (statement), derived from ledger lines. */
 class Statements
 {
     public function __construct(private Ledger $ledger) {}
@@ -34,7 +32,7 @@ class Statements
             ->values();
 
         $running = $opening;
-        $totals = ['issued' => '0.000', 'returned' => '0.000', 'scrap' => '0.000', 'loss' => '0.000'];
+        $totals = ['issued' => '0.000', 'handoff' => '0.000', 'returned' => '0.000', 'scrap' => '0.000', 'loss' => '0.000'];
         $rows = [];
 
         foreach ($lines as $l) {
@@ -43,12 +41,14 @@ class Statements
 
             $bucket = match (true) {
                 $l->kind === 'loss' => 'loss',
-                $l->kind === 'scrap' => 'scrap',
-                $l->kind === 'work' => 'returned',
+                in_array($l->kind, MetalOperations::SCRAP_KINDS, true) => 'scrap',
+                in_array($l->kind, MetalOperations::RETURN_KINDS, true) => 'returned',
+                $l->kind === 'handoff' => 'handoff',
                 default => 'issued',
             };
             // Reversals flip direction; keep the bucket and the sign honest.
-            $signed = ($bucket === 'issued') === $in ? $l->fine_wt : Weight::negate($l->fine_wt);
+            // Handoffs are netted: gold in from another kaarigar is +, gold passed on is −.
+            $signed = in_array($bucket, ['issued', 'handoff'], true) === $in ? $l->fine_wt : Weight::negate($l->fine_wt);
             $totals[$bucket] = Weight::add($totals[$bucket], $signed);
 
             $rows[] = [
@@ -56,6 +56,7 @@ class Statements
                 'voucher_no' => $l->transaction->voucher_no,
                 'type' => $l->transaction->type,
                 'kind' => $bucket,
+                'line_kind' => $l->kind,
                 'job_card' => $l->transaction->jobCard?->card_no,
                 'process' => $l->transaction->jobCard?->process?->name,
                 'karat' => $l->karat->label,
@@ -69,41 +70,5 @@ class Statements
         }
 
         return ['opening' => $opening, 'closing' => $running, 'rows' => $rows, 'totals' => $totals];
-    }
-
-    /**
-     * Wastage % per kaarigar or per process over closed job cards in a date range.
-     *
-     * @return list<array{id: int, name: string, cards: int, issued: string, loss: string, excess: string, wastage_pct: string}>
-     */
-    public function wastage(string $groupBy, string $from, string $to): array
-    {
-        $column = $groupBy === 'process' ? 'process_id' : 'kaarigar_id';
-        $table = $groupBy === 'process' ? 'processes' : 'kaarigars';
-
-        $rows = JobCard::query()
-            ->where('status', JobCard::CLOSED)
-            ->whereBetween('closed_at', [$from.' 00:00:00', $to.' 23:59:59'])
-            ->join($table, "{$table}.id", '=', "job_cards.{$column}")
-            ->groupBy("job_cards.{$column}", "{$table}.name")
-            ->select(["job_cards.{$column} as id", "{$table}.name as name"])
-            ->selectRaw('COUNT(*) as cards, SUM(issued_fine) as issued, SUM(loss_fine) as loss, SUM(excess_loss_fine) as excess')
-            ->toBase()
-            ->get();
-
-        return $rows->map(function ($r) {
-            $issued = Weight::fromDb($r->issued);
-            $loss = Weight::fromDb($r->loss);
-
-            return [
-                'id' => (int) $r->id,
-                'name' => $r->name,
-                'cards' => (int) $r->cards,
-                'issued' => $issued,
-                'loss' => $loss,
-                'excess' => Weight::fromDb($r->excess),
-                'wastage_pct' => Weight::percentOf($loss, $issued),
-            ];
-        })->sortByDesc(fn ($r) => (float) $r['wastage_pct'])->values()->all();
     }
 }

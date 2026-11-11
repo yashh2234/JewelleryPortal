@@ -1,12 +1,11 @@
 import { Avatar, cn, NotificationBell, PageHeader, PushButton, ThemeSwitcher, ThemeToggle, useTenant } from '@b2b/ui'
 import {
-  ArrowDownLeft, ArrowUpRight, BadgeCheck, BookUser, Calculator, FileSpreadsheet, Receipt, BarChart3, BookOpen, Columns3, Factory, Package, ShoppingCart, Truck, ClipboardList, Gem, Hammer, Inbox, LayoutDashboard, ListOrdered,
+  ArrowDownLeft, ArrowUpRight, BookUser, Calculator, FileSpreadsheet, Receipt, Columns3, Factory, Package, ShoppingCart, Truck, ClipboardList, Gem, Hammer, Inbox, LayoutDashboard, ListOrdered,
   LogOut, Menu, MessagesSquare, Palette, PieChart, Scale, Settings2, ShieldCheck, ShieldAlert, Store, TrendingUp, Users, Vault, X,
 } from 'lucide-react'
 import { useState, type ReactNode } from 'react'
 import { NavLink, Outlet, useNavigate } from 'react-router'
 import { useLogout } from '../session'
-import { SHOW_EXTRAS } from '../workflow'
 import { useCan, useMe } from './auth'
 
 interface NavItem {
@@ -14,11 +13,9 @@ interface NavItem {
   label: string
   icon: ReactNode
   permission?: string
-  /** Outside the workflow blueprint: hidden unless SHOW_EXTRAS is on. */
-  extra?: true
 }
 
-// Ordered by the blueprint's 7-stage flow (see ../workflow.ts).
+// Ordered by the workflow blueprint (Jewellery_Manufacturing_ERP_Workflow.pdf §5 manufacturer navigation).
 const NAV: { section?: string; items: NavItem[] }[] = [
   {
     items: [
@@ -26,7 +23,7 @@ const NAV: { section?: string; items: NavItem[] }[] = [
     ],
   },
   {
-    section: 'Retailers & CRM',
+    section: 'CRM & retailers',
     items: [
       { to: '/staff/designs', label: 'Design catalogue', icon: <Gem /> },
       { to: '/staff/retailers', label: 'Retailers', icon: <Store />, permission: 'retailers.manage' },
@@ -46,46 +43,43 @@ const NAV: { section?: string; items: NavItem[] }[] = [
     items: [
       { to: '/staff/metal/issue', label: 'Issue gold', icon: <ArrowUpRight />, permission: 'metal.issue' },
       { to: '/staff/metal/receive', label: 'Receive / return gold', icon: <ArrowDownLeft />, permission: 'metal.receive' },
-      { to: '/staff/metal/job-cards', label: 'Job cards', icon: <ClipboardList />, permission: 'kaarigars.view' },
-      { to: '/staff/kaarigars', label: 'Kaarigars', icon: <Hammer />, permission: 'kaarigars.view' },
-      { to: '/staff/metal/vault', label: 'Raw stock & transfers', icon: <Vault />, permission: 'kaarigars.view' },
+      { to: '/staff/metal/job-cards', label: 'Job cards & handoffs', icon: <ClipboardList />, permission: 'kaarigars.view' },
+      { to: '/staff/metal/requests', label: 'Kaarigar requests', icon: <Inbox />, permission: 'metal.receive' },
+      { to: '/staff/kaarigars', label: 'Karigar management', icon: <Hammer />, permission: 'kaarigars.view' },
+      { to: '/staff/metal/vault', label: 'Raw stock & scrap', icon: <Vault />, permission: 'kaarigars.view' },
       { to: '/staff/metal/transactions', label: 'Gold movement ledger', icon: <ListOrdered />, permission: 'kaarigars.view' },
-      { to: '/staff/metal/requests', label: 'Kaarigar requests', icon: <Inbox />, permission: 'metal.receive', extra: true },
-      { to: '/staff/metal/daybook', label: 'Day-book & closing', icon: <BookOpen />, permission: 'kaarigars.view', extra: true },
-      { to: '/staff/metal/wastage', label: 'Wastage report', icon: <BarChart3 />, permission: 'reports.view', extra: true },
     ],
   },
   {
-    section: 'QC, inventory & dispatch',
+    section: 'Inventory & dispatch',
     items: [
       { to: '/staff/finished', label: 'QC & finished goods', icon: <Package />, permission: 'production.manage|qc.manage|dispatch.manage' },
-      { to: '/staff/hallmarking', label: 'Hallmarking', icon: <BadgeCheck />, permission: 'production.manage', extra: true },
       { to: '/staff/dispatches', label: 'Dispatch & shipping', icon: <Truck />, permission: 'dispatch.manage|orders.manage' },
     ],
   },
   {
-    section: 'Accounts',
+    section: 'Accounts & payments',
     items: [
-      { to: '/staff/accounts/vouchers', label: 'Vouchers', icon: <Receipt />, permission: 'accounts.manage|reports.view', extra: true },
-      { to: '/staff/accounts/parties', label: 'Parties & ledgers', icon: <BookUser />, permission: 'accounts.manage|reports.view', extra: true },
-      { to: '/staff/accounts/reports', label: 'Reports & GST', icon: <FileSpreadsheet />, permission: 'accounts.manage|reports.view', extra: true },
-      { to: '/staff/accounts/settings', label: 'Accounting settings', icon: <Calculator />, permission: 'accounts.manage', extra: true },
+      { to: '/staff/accounts/vouchers', label: 'Invoices & vouchers', icon: <Receipt />, permission: 'accounts.manage|reports.view' },
+      { to: '/staff/accounts/parties', label: 'Balances & ledgers', icon: <BookUser />, permission: 'accounts.manage|reports.view' },
+      { to: '/staff/accounts/reports', label: 'Financial reports & GST', icon: <FileSpreadsheet />, permission: 'accounts.manage|reports.view' },
+      { to: '/staff/accounts/settings', label: 'Accounting settings', icon: <Calculator />, permission: 'accounts.manage' },
     ],
   },
   {
-    section: 'Insights',
+    section: 'Reports',
     items: [
-      { to: '/staff/reports', label: 'Reports & reconciliation', icon: <PieChart />, permission: 'reports.view' },
-      { to: '/staff/audit', label: 'Audit log', icon: <ShieldCheck />, permission: 'audit.view', extra: true },
+      { to: '/staff/reports', label: 'Reports & analytics', icon: <PieChart />, permission: 'reports.view' },
+      { to: '/staff/audit', label: 'Audit log', icon: <ShieldCheck />, permission: 'audit.view' },
     ],
   },
   {
-    section: 'Settings',
+    section: 'Settings & permissions',
     items: [
       { to: '/staff/settings/karats', label: 'Purities (karats)', icon: <Scale />, permission: 'settings.manage' },
       { to: '/staff/settings/processes', label: 'Production stages', icon: <Settings2 />, permission: 'settings.manage' },
       { to: '/staff/settings/gold-rates', label: 'Gold rate', icon: <TrendingUp />, permission: 'settings.manage' },
-      { to: '/staff/settings/gold-rules', label: 'Gold issue rules', icon: <ShieldAlert />, permission: 'settings.manage', extra: true },
+      { to: '/staff/settings/gold-rules', label: 'Gold issue rules', icon: <ShieldAlert />, permission: 'settings.manage' },
       { to: '/staff/settings/users', label: 'Users & roles', icon: <Users />, permission: 'users.manage' },
       { to: '/staff/settings/branding', label: 'Business & branding', icon: <Palette />, permission: 'settings.manage' },
     ],
@@ -104,7 +98,7 @@ export function Layout() {
   const nav = (
     <nav className="flex flex-col gap-5 px-3 py-4">
       {NAV.map((group, i) => {
-        const items = group.items.filter((it) => (SHOW_EXTRAS || !it.extra) && (!it.permission || can(it.permission)))
+        const items = group.items.filter((it) => !it.permission || can(it.permission))
         if (!items.length) return null
         return (
           <div key={i} className="grid gap-px">

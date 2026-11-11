@@ -14,11 +14,13 @@ class KaarigarRequest extends Model
     use Audited, BelongsToTenant;
 
     public const DISPUTE = 'dispute';
+
     public const RETURN = 'return';
-    public const ADVANCE = 'advance';
 
     public const PENDING = 'pending';
+
     public const APPROVED = 'approved';
+
     public const REJECTED = 'rejected';
 
     protected $attributes = ['status' => self::PENDING];

@@ -47,6 +47,12 @@ export interface Kaarigar {
   type: 'in_house' | 'outside'
   address: string | null
   is_active: boolean
+  /** Head kaarigar this kaarigar works under (blueprint §2). */
+  head_kaarigar_id: number | null
+  head?: { id: number; name: string } | null
+  sub_kaarigars_count?: number
+  sub_kaarigars?: { id: number; name: string; phone: string | null; is_active: boolean }[]
+  max_fine_balance?: string | null
   app_users_count?: number
   app_users?: KaarigarAppUser[]
 }

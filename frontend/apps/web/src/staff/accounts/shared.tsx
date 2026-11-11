@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 
 export interface Party {
   id: number
-  type: 'retailer' | 'supplier' | 'kaarigar' | 'refiner' | 'ahc' | 'other'
+  type: 'retailer' | 'supplier' | 'kaarigar' | 'refiner' | 'other'
   name: string
   gstin: string | null
   state_code: string | null

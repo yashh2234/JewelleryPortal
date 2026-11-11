@@ -7,15 +7,15 @@ use App\Models\Account;
 use App\Models\Dispatch;
 use App\Models\FinancialYear;
 use App\Models\LabourRate;
+use App\Models\Order;
 use App\Models\Party;
 use App\Models\TaxSetting;
 use App\Models\Voucher;
 use App\Services\Accounting\Books;
-use App\Services\Accounting\EInvoice;
 use App\Services\Accounting\Invoicing;
+use App\Services\Accounting\OrderPayments;
 use App\Services\Accounting\Reports;
 use App\Services\Accounting\Vouchers;
-use App\Support\Money;
 use App\Support\Tenancy\TenantContext;
 use App\Support\Tenancy\TenantRules;
 use Barryvdh\DomPDF\Facade\Pdf;
@@ -75,7 +75,7 @@ class AccountingController extends Controller
         return response()->json($parties);
     }
 
-    /** Suppliers, refiners and others are created here; retailers, kaarigars and AHCs appear automatically. */
+    /** Suppliers, refiners and others are created here; retailers and kaarigars appear automatically. */
     public function saveParty(Request $request, ?Party $party = null): JsonResponse
     {
         $data = $request->validate([
@@ -200,8 +200,8 @@ class AccountingController extends Controller
         }
 
         $cancelled = $this->books->cancel($voucher, $reason);
-        if ($voucher->source_type === 'order' && ($order = \App\Models\Order::find($voucher->source_id))) {
-            app(\App\Services\Accounting\OrderPayments::class)->refresh($order);
+        if ($voucher->source_type === 'order' && ($order = Order::find($voucher->source_id))) {
+            app(OrderPayments::class)->refresh($order);
         }
 
         return response()->json(['data' => $cancelled], 201);
@@ -210,13 +210,13 @@ class AccountingController extends Controller
     public function receipt(Request $request): JsonResponse
     {
         $d = $this->moneyRules($request);
-        $order = $request->filled('order_id') ? \App\Models\Order::findOrFail($request->integer('order_id')) : null;
+        $order = $request->filled('order_id') ? Order::findOrFail($request->integer('order_id')) : null;
 
         // Against an order: counts as the order's advance / payment (spec §4).
         $voucher = $this->vouchers->receipt(Party::findOrFail($d['party_id']), $d['amount'], $d['mode'], $d['date'] ?? today()->toDateString(), $d['narration'] ?? null,
             $order ? ['source_type' => 'order', 'source_id' => $order->id] : []);
         if ($order) {
-            app(\App\Services\Accounting\OrderPayments::class)->refresh($order);
+            app(OrderPayments::class)->refresh($order);
         }
 
         return $this->made($voucher);
@@ -310,7 +310,7 @@ class AccountingController extends Controller
     {
         $voucher = $this->invoicing->post($dispatch, $this->invoiceOpts($request));
         if ($dispatch->order) {
-            app(\App\Services\Accounting\OrderPayments::class)->refresh($dispatch->order);
+            app(OrderPayments::class)->refresh($dispatch->order);
         }
 
         return $this->made($voucher);
@@ -324,24 +324,13 @@ class AccountingController extends Controller
         return Pdf::loadView('pdf.invoice', ['v' => $voucher, 'tenant' => $context->get()])->stream(str_replace('/', '-', $voucher->voucher_no).'.pdf');
     }
 
-    public function einvoiceJson(Voucher $voucher, EInvoice $einvoice): JsonResponse
-    {
-        return response()->json($einvoice->payload($voucher))
-            ->header('Content-Disposition', 'attachment; filename="'.str_replace('/', '-', $voucher->voucher_no).'-einvoice.json"');
-    }
-
-    public function einvoice(Voucher $voucher, EInvoice $einvoice): JsonResponse
-    {
-        return response()->json(['data' => $einvoice->generate($voucher)]);
-    }
-
     // ── Reports ─────────────────────────────────────────────────────────────
 
     public function report(Request $request, string $name): JsonResponse|Response
     {
         $d = $request->validate([
             'from' => ['nullable', 'date'], 'to' => ['nullable', 'date'], 'as_of' => ['nullable', 'date'],
-            'type' => ['nullable', Rule::in(['retailer', 'supplier', 'kaarigar', 'refiner', 'ahc', 'other'])],
+            'type' => ['nullable', Rule::in(['retailer', 'supplier', 'kaarigar', 'refiner', 'other'])],
             'account' => ['nullable', Rule::in(['cash', 'bank'])],
             'date' => ['nullable', 'date'],
         ]);
@@ -360,10 +349,6 @@ class AccountingController extends Controller
             'stock-valuation' => response()->json($this->reports->stockValuation($asOf)),
             'daybook' => response()->json(['date' => $d['date'] ?? $to, 'data' => Voucher::with(['party:id,name', 'entries.account:id,name'])
                 ->where('date', $d['date'] ?? $to)->orderBy('id')->get()]),
-            'tally' => response($this->reports->tallyXml($from, $to), 200, [
-                'Content-Type' => 'application/xml',
-                'Content-Disposition' => "attachment; filename=\"tally-{$from}-{$to}.xml\"",
-            ]),
             default => abort(404),
         };
     }
@@ -390,7 +375,6 @@ class AccountingController extends Controller
             'rates.*' => ['decimal:0,2', 'gt:0'],
             'stone_charges' => ['nullable', 'array'],
             'stone_charges.*' => ['decimal:0,2', 'min:0'],
-            'hallmark_per_piece' => ['nullable', 'decimal:0,2', 'min:0'],
         ]);
 
         return array_filter($d, fn ($v) => $v !== null);

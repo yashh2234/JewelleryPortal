@@ -7,14 +7,15 @@ use App\Models\Concerns\BelongsToTenant;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
-/** One finished piece with its actual weights; carries the HUID once hallmarked. */
+/** One finished piece with its actual weights. */
 class FinishedItem extends Model
 {
     use Audited, BelongsToTenant;
 
     public const IN_STOCK = 'in_stock';
-    public const AT_AHC = 'at_ahc';
+
     public const REWORK = 'rework';
+
     public const DISPATCHED = 'dispatched';
 
     protected $attributes = ['status' => self::IN_STOCK, 'qc_status' => 'pending'];

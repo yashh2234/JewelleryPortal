@@ -1,10 +1,9 @@
 import { api, Card, grams, InstallPrompt, NotificationBell, PushButton, rupees, ThemeToggle, useTenant } from '@b2b/ui'
 import { useQuery } from '@tanstack/react-query'
-import { BookOpen, Briefcase, ChevronRight, IndianRupee, Inbox, LogOut, PackageCheck } from 'lucide-react'
+import { BookOpen, Briefcase, ChevronRight, IndianRupee, Inbox, LogOut, PackageCheck, Users } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { Link, useNavigate } from 'react-router'
 import { useLogout } from '../session'
-import { SHOW_EXTRAS } from '../workflow'
 import { LangToggle, useI18n, type Key } from './i18n'
 import { OfflineBar } from './bars'
 import type { KaarigarMe } from './me'
@@ -15,6 +14,8 @@ export interface KaarigarHome {
   open_jobs: number
   new_issues: number
   labour_this_week: string
+  is_head: boolean
+  head: { id: number; name: string } | null
 }
 
 export default function Home({ me }: { me: KaarigarMe }) {
@@ -58,24 +59,23 @@ export default function Home({ me }: { me: KaarigarMe }) {
           </Card>
         </Link>
 
-        <div className={SHOW_EXTRAS ? 'grid grid-cols-2 gap-3' : 'grid gap-3'}>
+        <div className="grid grid-cols-2 gap-3">
           <Card className="p-4">
             <p className="text-sm text-muted-foreground">{t('jobsToday')}</p>
             <p className="tabular mt-1 text-3xl font-semibold">{h?.jobs_due_today ?? 0}</p>
           </Card>
-          {SHOW_EXTRAS && (
-            <Card className="p-4">
-              <p className="text-sm text-muted-foreground">{t('labourWeek')}</p>
-              <p className="tabular mt-1 text-2xl font-semibold">{rupees(h?.labour_this_week ?? 0)}</p>
-            </Card>
-          )}
+          <Card className="p-4">
+            <p className="text-sm text-muted-foreground">{t('labourWeek')}</p>
+            <p className="tabular mt-1 text-2xl font-semibold">{rupees(h?.labour_this_week ?? 0)}</p>
+          </Card>
         </div>
 
         <div className="mt-2 grid grid-cols-2 gap-3">
           <Tile to="/kaarigar/jobs" icon={<Briefcase />} label="myJobs" badge={h?.open_jobs} />
           <Tile to="/kaarigar/khata" icon={<BookOpen />} label="khata" />
-          {SHOW_EXTRAS && <Tile to="/kaarigar/requests" icon={<Inbox />} label="requests" />}
-          {SHOW_EXTRAS && <Tile to="/kaarigar/earnings" icon={<IndianRupee />} label="earnings" />}
+          {h?.is_head && <Tile to="/kaarigar/team" icon={<Users />} label="team" />}
+          <Tile to="/kaarigar/requests" icon={<Inbox />} label="requests" />
+          <Tile to="/kaarigar/earnings" icon={<IndianRupee />} label="earnings" />
         </div>
 
         <div className="mt-2 grid gap-2"><InstallPrompt appName={tenant.name} /><PushButton label="Notify me of new gold · सूचना चालू करें" className="h-12 w-full text-base" /></div>

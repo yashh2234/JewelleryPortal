@@ -8,20 +8,19 @@ use Illuminate\Database\Eloquent\Model;
 
 /**
  * Anyone the business owes or is owed by, in money and/or metal: retailers,
- * bullion suppliers, kaarigars, refiners, hallmarking centres.
+ * bullion suppliers, kaarigars, refiners.
  */
 class Party extends Model
 {
     use Audited, BelongsToTenant;
 
-    public const TYPES = ['retailer', 'supplier', 'kaarigar', 'refiner', 'ahc', 'other'];
+    public const TYPES = ['retailer', 'supplier', 'kaarigar', 'refiner', 'other'];
 
     /** Control account (system_key) each party type posts to. */
     public const CONTROL = [
         'retailer' => 'debtors',
         'supplier' => 'creditors',
         'refiner' => 'creditors',
-        'ahc' => 'creditors',
         'other' => 'creditors',
         'kaarigar' => 'kaarigars',
     ];

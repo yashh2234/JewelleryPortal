@@ -17,7 +17,11 @@ interface Profile {
   work_orders: { id: number; wo_no: string; qty: number; status: string; due_date: string | null; design: { code: string; name: string } }[]
   money: { labour_total: string; paid_total: string; balance: string; recent_payments: { id: number; voucher_no: string; date: string; amount: string; narration: string | null }[] }
 }
-interface Kaarigar { id: number; name: string; phone: string | null; type: string; address: string | null; is_active: boolean; max_fine_balance: string | null; app_users: { id: number; name: string; phone: string }[] }
+interface Kaarigar {
+  id: number; name: string; phone: string | null; type: string; address: string | null; is_active: boolean; max_fine_balance: string | null; app_users: { id: number; name: string; phone: string }[]
+  head: { id: number; name: string } | null
+  sub_kaarigars: { id: number; name: string; phone: string | null; is_active: boolean }[]
+}
 
 /** Spec §6D: everything about one kaarigar — gold, work, money, performance. */
 export default function KaarigarProfile() {
@@ -32,7 +36,7 @@ export default function KaarigarProfile() {
 
   return (
     <>
-      <PageTitle title={k.name} description={[k.type === 'outside' ? 'Outside karkhana' : 'In-house', k.phone, k.address].filter(Boolean).join(' · ')}>
+      <PageTitle title={k.name} description={[k.type === 'outside' ? 'Outside karkhana' : 'In-house', k.head && `under head kaarigar ${k.head.name}`, k.phone, k.address].filter(Boolean).join(' · ')}>
         {k.is_active ? <Badge tone="success">Active</Badge> : <Badge>Inactive</Badge>}
         <Link to={`/staff/kaarigars/${k.id}/ledger`}><Button variant="outline"><BookOpen /> Gold ledger</Button></Link>
         {can('metal.issue') && <Link to="/staff/metal/issue"><Button>Issue gold</Button></Link>}
@@ -45,7 +49,7 @@ export default function KaarigarProfile() {
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <Stat label="Gold in hand (fine)" value={grams(p.gold_held.fine)} hint={`Gross ${grams(p.gold_held.gross)}${p.limit ? ` · limit ${grams(p.limit)}` : ''}`} />
         <Stat label="Issued to date (closed cards)" value={grams(p.totals.issued_fine)} hint={`Returned ${grams(p.totals.returned_fine)}`} />
-        <Stat label="Wastage" value={p.totals.wastage_pct === null ? '—' : `${p.totals.wastage_pct}%`} hint={`${grams(p.totals.loss_fine)} lost${Number(p.totals.unresolved_excess) > 0 ? ` · ${grams(p.totals.unresolved_excess)} unresolved` : ''}`} />
+        <Stat label="Difference (loss)" value={p.totals.wastage_pct === null ? '—' : `${p.totals.wastage_pct}%`} hint={`${grams(p.totals.loss_fine)} on closed cards${Number(p.totals.unresolved_excess) > 0 ? ` · ${grams(p.totals.unresolved_excess)} waiting for approval` : ''}`} />
         <Stat label="Labour balance" value={rupees(p.money.balance)} hint={`Earned ${rupees(p.money.labour_total)} · paid ${rupees(p.money.paid_total)}`} />
       </div>
 
@@ -64,6 +68,15 @@ export default function KaarigarProfile() {
               </dl>
             </div>
           </Card>
+          {k.sub_kaarigars.length > 0 && (
+            <Card className="p-5">
+              <h2 className="font-semibold tracking-tight">Sub-kaarigars ({k.sub_kaarigars.length})</h2>
+              <p className="text-xs text-muted-foreground">{k.name} can hand them work and gold from his job cards, in the app or here.</p>
+              <ul className="mt-2 grid gap-1 text-sm">
+                {k.sub_kaarigars.map((s) => <li key={s.id}><Link className="text-brand hover:underline" to={`/staff/kaarigars/${s.id}`}>{s.name}</Link>{!s.is_active && ' (inactive)'}</li>)}
+              </ul>
+            </Card>
+          )}
           {can('kaarigars.manage') && <LimitForm k={k} />}
         </div>
 

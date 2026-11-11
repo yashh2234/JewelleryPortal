@@ -7,6 +7,7 @@ use App\Models\KaarigarUser;
 use App\Models\Retailer;
 use App\Models\RetailerUser;
 use App\Models\Tenant;
+use App\Services\Auth\LoginOtp;
 use App\Services\Sms\SmsSender;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
@@ -125,7 +126,8 @@ class AuthGuardsTest extends TestCase
 
     public function test_kaarigar_otp_login(): void
     {
-        $sms = new class implements SmsSender {
+        $sms = new class implements SmsSender
+        {
             public array $sent = [];
 
             public function sendOtp(string $phone, string $code): void
@@ -157,7 +159,8 @@ class AuthGuardsTest extends TestCase
 
     public function test_otp_locks_after_too_many_wrong_attempts(): void
     {
-        $sms = new class implements SmsSender {
+        $sms = new class implements SmsSender
+        {
             public ?string $code = null;
 
             public function sendOtp(string $phone, string $code): void
@@ -168,7 +171,7 @@ class AuthGuardsTest extends TestCase
         $this->app->instance(SmsSender::class, $sms);
         $this->kaarigarUser();
 
-        $otp = app(\App\Services\Auth\LoginOtp::class);
+        $otp = app(LoginOtp::class);
         $this->asTenant($this->tenant, function () use ($otp, $sms) {
             $otp->send('9876500001');
             for ($i = 0; $i < 5; $i++) {

@@ -11,16 +11,16 @@ use App\Models\MetalTransaction;
 use App\Models\MetalTransactionLine;
 use App\Models\Voucher;
 use App\Services\Metal\Ledger;
+use App\Services\Metal\LedgerException;
 use App\Support\Metal\Weight;
 use App\Support\Money;
 use App\Support\Tenancy\TenantContext;
 
 /**
  * Kaarigar labour bill, posted automatically when a job card closes:
- *   labour = rate × returned work gross (per gram) or × pieces (per piece)
- *   less wastage above the limit, valued at the day's fine-gold rate (optional,
- *   tenant setting "labour_deduct_excess", on by default). When deducted, the
- *   excess gold is written off the kaarigar's metal balance as "recovered".
+ *   labour = rate × returned work gross (per gram) or × pieces (per piece).
+ * Wastage above the limit is never deducted on its own: when the owner approves
+ * the difference he may choose to recover the excess in money (recoverExcess).
  */
 class Labour
 {
@@ -33,58 +33,71 @@ class Labour
         }
 
         $rate = LabourRate::for($card->process_id, $card->kaarigar_id);
+        if (! $rate) {
+            return null;
+        }
+
         $work = $this->returnedWork($card);
+        $qty = $rate->basis === 'per_piece' ? (string) ($work['pieces'] ?: ($card->pieces ?? 0)) : $work['gross'];
+        $labour = Money::mul($qty, $rate->rate);
+        $basisLabel = $rate->basis === 'per_piece' ? "{$qty} pcs × ₹{$rate->rate}" : "{$qty} g × ₹{$rate->rate}/g";
 
-        $labour = '0.00';
-        $basisLabel = '';
-        if ($rate) {
-            $qty = $rate->basis === 'per_piece' ? (string) ($work['pieces'] ?: ($card->pieces ?? 0)) : $work['gross'];
-            $labour = Money::mul($qty, $rate->rate);
-            $basisLabel = $rate->basis === 'per_piece' ? "{$qty} pcs × ₹{$rate->rate}" : "{$qty} g × ₹{$rate->rate}/g";
-        }
-
-        $deduction = '0.00';
-        $excess = Weight::round((string) $card->excess_loss_fine);
-        $deduct = ($this->context->get()?->settings['labour_deduct_excess'] ?? true)
-            && Weight::isPositive($excess) && ! $card->excess_resolution;
-        $fineRate = $deduct ? $this->fineRate() : null;
-        if ($deduct && $fineRate !== null) {
-            $deduction = Money::mul($excess, $fineRate);
-        }
-
-        if (Money::isZero($labour) && Money::isZero($deduction)) {
+        if (Money::isZero($labour)) {
             return null;
         }
 
         $party = $this->books->party($card->kaarigar);
-        $net = Money::sub($labour, $deduction);
-        $netIsOwedToKaarigar = Money::compare($net, '0') >= 0;
-
         $voucher = $this->books->post(Voucher::LABOUR, today()->toDateString(), $party, [
-            ['account' => 'labour', 'debit' => $labour, 'memo' => $basisLabel ?: null],
-            $netIsOwedToKaarigar ? ['party' => $party, 'credit' => $net] : ['party' => $party, 'debit' => Money::abs($net)],
-            ['account' => 'wastage_recovery', 'credit' => $deduction, 'memo' => Money::isZero($deduction) ? null : "Excess wastage {$excess} g @ ₹{$fineRate}/g"],
+            ['account' => 'labour', 'debit' => $labour, 'memo' => $basisLabel],
+            ['party' => $party, 'credit' => $labour],
         ], [
             'narration' => "Labour for {$card->card_no} ({$card->process->name})",
             'source_type' => 'job_card',
             'source_id' => $card->id,
             'amount' => $labour,
-            'meta' => ['labour' => $labour, 'deduction' => $deduction, 'basis' => $basisLabel, 'excess_fine' => $excess],
+            'meta' => ['labour' => $labour, 'deduction' => '0.00', 'basis' => $basisLabel, 'excess_fine' => '0.000'],
         ]);
 
-        // Recovered in money → the excess gold leaves the kaarigar's metal balance.
-        if (! Money::isZero($deduction)) {
-            $this->ledger->post(MetalTransaction::LOSS_WRITEOFF, [
-                'job_card_id' => $card->id, 'kaarigar_id' => $card->kaarigar_id, 'process_id' => $card->process_id,
-                'over_limit' => true, 'remarks' => "Excess wastage on {$card->card_no} recovered from labour ({$voucher->voucher_no})",
-            ], [[
-                'from' => $this->ledger->kaarigar($card->kaarigar), 'to' => $this->ledger->of(MetalLocation::LOSS),
-                'karat' => $card->karat, 'kind' => 'loss', 'fine' => $excess,
-            ]]);
-            $card->forceFill(['excess_resolution' => 'recovered', 'excess_resolved_at' => now()]);
+        $card->forceFill(['labour_voucher_id' => $voucher->id])->save();
+
+        return $voucher;
+    }
+
+    /**
+     * Approver chose to recover the gold above the allowed wastage from the
+     * kaarigar's money: deduct it at the day's fine rate and take the gold off his
+     * metal balance as "recovered".
+     */
+    public function recoverExcess(JobCard $card): Voucher
+    {
+        $excess = Weight::round((string) $card->excess_loss_fine);
+        $fineRate = $this->fineRate();
+        if ($fineRate === null) {
+            throw new LedgerException('Set today\'s gold rate before recovering wastage in money.');
         }
 
-        $card->forceFill(['labour_voucher_id' => $voucher->id])->save();
+        $deduction = Money::mul($excess, $fineRate);
+        $party = $this->books->party($card->kaarigar);
+
+        $voucher = $this->books->post(Voucher::JOURNAL, today()->toDateString(), $party, [
+            ['party' => $party, 'debit' => $deduction],
+            ['account' => 'wastage_recovery', 'credit' => $deduction, 'memo' => "Excess wastage {$excess} g @ ₹{$fineRate}/g"],
+        ], [
+            'narration' => "Excess wastage on {$card->card_no} recovered from {$card->kaarigar->name}",
+            'source_type' => 'job_card',
+            'source_id' => $card->id,
+            'amount' => $deduction,
+            'meta' => ['deduction' => $deduction, 'excess_fine' => $excess],
+        ]);
+
+        $this->ledger->post(MetalTransaction::LOSS_WRITEOFF, [
+            'job_card_id' => $card->id, 'kaarigar_id' => $card->kaarigar_id, 'process_id' => $card->process_id,
+            'work_order_id' => $card->woStep?->work_order_id,
+            'over_limit' => true, 'remarks' => "Excess wastage on {$card->card_no} recovered in money ({$voucher->voucher_no})",
+        ], [[
+            'from' => $this->ledger->kaarigar($card->kaarigar), 'to' => $this->ledger->of(MetalLocation::LOSS),
+            'karat' => $card->karat, 'kind' => 'loss', 'fine' => $excess,
+        ]]);
 
         return $voucher;
     }

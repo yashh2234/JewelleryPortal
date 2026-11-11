@@ -47,7 +47,8 @@ class IssueRules
         $on = $this->settings();
         $reasons = [];
 
-        $issues = MetalTransaction::where('type', MetalTransaction::ISSUE)->where('kaarigar_id', $kaarigar->id)->whereNull('reversed_by_id');
+        // Factory issues and handoffs from other kaarigars both need his acknowledgement.
+        $issues = MetalTransaction::whereIn('type', [MetalTransaction::ISSUE, MetalTransaction::HANDOFF])->where('kaarigar_id', $kaarigar->id)->whereNull('reversed_by_id');
 
         if ($on['disputed'] && ($n = (clone $issues)->where('kaarigar_ack', 'disputed')->pluck('voucher_no'))->isNotEmpty()) {
             $reasons[] = 'Disputed issue not resolved: '.$n->implode(', ').'.';
@@ -65,9 +66,9 @@ class IssueRules
 
         if ($on['excess']) {
             $n = JobCard::where('kaarigar_id', $kaarigar->id)->where('status', JobCard::CLOSED)
-                ->where('excess_loss_fine', '>', 0)->whereNull('excess_resolution')->pluck('card_no');
+                ->where('loss_status', JobCard::LOSS_PENDING)->where('excess_loss_fine', '>', 0)->pluck('card_no');
             if ($n->isNotEmpty()) {
-                $reasons[] = 'Wastage above the limit not resolved on '.$n->implode(', ').'.';
+                $reasons[] = 'Gold difference above the limit not approved on '.$n->implode(', ').'.';
             }
         }
 

@@ -6,10 +6,11 @@ use App\Http\Controllers\Controller;
 use App\Models\Design;
 use App\Models\JobCard;
 use App\Models\Process;
-use App\Models\WoStep;
 use App\Models\WorkOrder;
+use App\Models\WoStep;
 use App\Services\Metal\MetalOperations;
 use App\Services\Production\Production;
+use App\Services\Push\Notify;
 use App\Support\Metal\Weight;
 use App\Support\Tenancy\TenantRules;
 use Illuminate\Http\JsonResponse;
@@ -101,7 +102,7 @@ class WorkOrderController extends Controller
                 'step' => $step ? ['id' => $step->id, 'status' => $step->status, 'sequence' => $step->sequence, 'open_cards' => $open->count(), 'cards' => $step->jobCards->count()] : null,
                 'kaarigars' => $open->pluck('kaarigar.name')->unique()->values(),
                 'with_kaarigar_fine' => Weight::add('0', ...$open->map(fn ($c) => $this->live($c)['outstanding'])->all()),
-                'alert' => $wo->steps->flatMap->jobCards->contains(fn ($c) => Weight::isPositive($c->excess_loss_fine) && ! $c->excess_resolution),
+                'alert' => $wo->steps->flatMap->jobCards->contains(fn ($c) => $c->lossPending()),
             ];
 
             if ($step && isset($columns[$step->process_id])) {
@@ -147,7 +148,7 @@ class WorkOrderController extends Controller
         $step->update($data);
 
         if (! empty($data['assigned_user_id'])) {
-            app(\App\Services\Push\Notify::class)->staffUser($data['assigned_user_id'], "Stage assigned: {$step->process->name}", "{$workOrder->wo_no}", "/staff/work-orders/{$workOrder->id}", 'wo.assigned');
+            app(Notify::class)->staffUser($data['assigned_user_id'], "Stage assigned: {$step->process->name}", "{$workOrder->wo_no}", "/staff/work-orders/{$workOrder->id}", 'wo.assigned');
         }
 
         return response()->json(['data' => $step->load('assignee:id,name')]);
@@ -207,6 +208,6 @@ class WorkOrderController extends Controller
     {
         $f = $this->ops->cardFigures($card);
 
-        return $f + ['outstanding' => Weight::sub($f['issued'], Weight::add($f['returned'], $f['scrap']))];
+        return $f + ['outstanding' => $this->ops->outstanding($f)];
     }
 }

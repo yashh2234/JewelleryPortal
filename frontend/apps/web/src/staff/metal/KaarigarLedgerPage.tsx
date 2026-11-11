@@ -7,7 +7,8 @@ import { PageTitle } from '../layout'
 import { fmtDate } from './shared'
 import type { Statement } from './types'
 
-const kindTone = { issued: 'brand', returned: 'success', scrap: 'neutral', loss: 'danger' } as const
+const kindTone = { issued: 'brand', handoff: 'warning', returned: 'success', scrap: 'neutral', loss: 'danger' } as const
+const kindLabel = { issued: 'Issued', handoff: 'Handoff', returned: 'Returned', scrap: 'Scrap / dust', loss: 'Approved loss' } as const
 
 /** Kaarigar khata: every issue, return, scrap and loss with a running fine balance. */
 export default function KaarigarLedgerPage() {
@@ -31,10 +32,10 @@ export default function KaarigarLedgerPage() {
         <Link to={`/staff/metal/issue`}><Button>Issue gold</Button></Link>
       </PageTitle>
 
-      <div className="mb-4 grid gap-3 sm:grid-cols-4">
-        {s && (['issued', 'returned', 'scrap', 'loss'] as const).map((k) => (
+      <div className="mb-4 grid gap-3 sm:grid-cols-5">
+        {s && (['issued', 'handoff', 'returned', 'scrap', 'loss'] as const).map((k) => (
           <Card key={k} className="p-3">
-            <p className="text-xs capitalize text-muted-foreground">{k === 'loss' ? 'Wastage' : k}</p>
+            <p className="text-xs text-muted-foreground">{k === 'handoff' ? 'Handoffs (net)' : kindLabel[k]}</p>
             <p className="tabular text-lg font-semibold">{s.totals[k]} g</p>
           </Card>
         ))}
@@ -56,7 +57,7 @@ export default function KaarigarLedgerPage() {
             <tr key={i}>
               <Td>{fmtDate(r.date)}</Td>
               <Td className="font-mono text-xs">{r.voucher_no}</Td>
-              <Td><Badge tone={kindTone[r.kind]} className="capitalize">{r.kind === 'loss' ? 'wastage' : r.kind}</Badge>{r.type === 'reversal' && <Badge className="ml-1">reversal</Badge>}</Td>
+              <Td><Badge tone={kindTone[r.kind]}>{kindLabel[r.kind]}</Badge>{r.line_kind && !['metal', 'work', 'scrap', 'loss', 'handoff'].includes(r.line_kind) && <Badge className="ml-1">{r.line_kind}</Badge>}{r.type === 'reversal' && <Badge className="ml-1">reversal</Badge>}</Td>
               <Td>{r.job_card}{r.process && <div className="text-xs text-muted-foreground">{r.process}</div>}</Td>
               <Td>{r.karat}</Td>
               <Td className="tabular">{r.gross_wt}</Td>

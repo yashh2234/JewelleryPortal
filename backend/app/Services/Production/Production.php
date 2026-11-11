@@ -9,14 +9,15 @@ use App\Models\Karat;
 use App\Models\MetalLocation;
 use App\Models\MetalTransaction;
 use App\Models\Order;
-use App\Models\OrderLine;
 use App\Models\Retailer;
 use App\Models\RouteTemplate;
-use App\Models\WoStep;
 use App\Models\WorkOrder;
+use App\Models\WoStep;
 use App\Services\Metal\Ledger;
 use App\Services\Metal\LedgerException;
 use App\Services\Metal\MetalOperations;
+use App\Services\Portal\Catalogue;
+use App\Services\Push\Notify;
 use App\Support\Metal\Weight;
 use App\Support\Money;
 use App\Support\NumberSeries;
@@ -27,7 +28,7 @@ use Illuminate\Support\Facades\DB;
  * its route as job cards; finished pieces come out with actual weights.
  *
  * Gold path: Vault → Kaarigar (first stage) → WO → Kaarigar (next stage) → … → WO
- *            → Finished goods (one row per piece) → AHC → Finished → Retailer.
+ *            → Finished goods (one row per piece) → Retailer.
  */
 class Production
 {
@@ -66,7 +67,7 @@ class Production
     /** Estimated order value at today's rate (metal + making), for the sales order. */
     public function estimate(Order $order, Retailer $retailer): ?string
     {
-        $catalogue = app(\App\Services\Portal\Catalogue::class);
+        $catalogue = app(Catalogue::class);
         $total = '0';
         $any = false;
 
@@ -89,7 +90,7 @@ class Production
     {
         $this->assertStatus($order, [Order::NEW]);
         $order->forceFill(['status' => Order::PENDING_APPROVAL])->save();
-        app(\App\Services\Push\Notify::class)->staffWith('orders.approve', "Order {$order->order_no} needs approval", $order->retailer->shop_name, "/staff/orders/{$order->id}", 'order.pending_approval');
+        app(Notify::class)->staffWith('orders.approve', "Order {$order->order_no} needs approval", $order->retailer->shop_name, "/staff/orders/{$order->id}", 'order.pending_approval');
 
         return $order;
     }
@@ -98,8 +99,8 @@ class Production
     {
         $this->assertStatus($order, [Order::NEW, Order::PENDING_APPROVAL]);
         $order->forceFill(['status' => Order::APPROVED, 'approved_at' => now(), 'confirmed_at' => now(), 'approved_by' => auth('staff')->id()])->save();
-        app(\App\Services\Push\Notify::class)->orderStatus($order, 'Approved and going into production.', 'order.approved');
-        app(\App\Services\Push\Notify::class)->staffWith('production.manage', "Order {$order->order_no} approved", 'Create the work orders.', "/staff/orders/{$order->id}", 'order.approved');
+        app(Notify::class)->orderStatus($order, 'Approved and going into production.', 'order.approved');
+        app(Notify::class)->staffWith('production.manage', "Order {$order->order_no} approved", 'Create the work orders.', "/staff/orders/{$order->id}", 'order.approved');
 
         return $order;
     }
@@ -149,7 +150,7 @@ class Production
                 ->where('status', WorkOrder::OPEN)->get()->each(fn ($wo) => $wo->forceFill(['status' => WorkOrder::CANCELLED])->save());
             $order->forceFill(['status' => Order::CANCELLED, 'cancel_reason' => $reason])->save();
         });
-        app(\App\Services\Push\Notify::class)->orderStatus($order, "Cancelled: {$reason}", 'order.cancelled');
+        app(Notify::class)->orderStatus($order, "Cancelled: {$reason}", 'order.cancelled');
 
         return $order;
     }
@@ -212,7 +213,7 @@ class Production
             $this->progress->refresh($order);
 
             foreach ($created as $wo) {
-                app(\App\Services\Push\Notify::class)->staffWith('production.manage', "Work order {$wo->wo_no} created", "{$order->order_no} · {$wo->qty} pcs", "/staff/work-orders/{$wo->id}", 'wo.created');
+                app(Notify::class)->staffWith('production.manage', "Work order {$wo->wo_no} created", "{$order->order_no} · {$wo->qty} pcs", "/staff/work-orders/{$wo->id}", 'wo.created');
             }
 
             return $created;
@@ -378,10 +379,10 @@ class Production
         if (! $wo->finishedItems()->exists()) {
             throw new LedgerException('Record the finished pieces before completing the work order.');
         }
-        // Spec 16.5: gold is reconciled first — every flagged difference resolved.
-        $unresolved = $wo->jobCards()->where('job_cards.excess_loss_fine', '>', 0)->whereNull('job_cards.excess_resolution')->pluck('card_no');
+        // Blueprint rule 4: gold is reconciled first — every difference approved with a reason.
+        $unresolved = $wo->jobCards()->where('job_cards.loss_status', JobCard::LOSS_PENDING)->pluck('card_no');
         if ($unresolved->isNotEmpty()) {
-            throw new LedgerException('Resolve the excess wastage on '.$unresolved->implode(', ').' before completing the work order.');
+            throw new LedgerException('Approve the gold difference on '.$unresolved->implode(', ').' before completing the work order.');
         }
 
         return DB::transaction(function () use ($wo) {
@@ -407,7 +408,7 @@ class Production
     }
 
     /**
-     * Send pieces back for rework (QC or hallmark failure): a new work order is
+     * Send pieces back for rework (QC failure): a new work order is
      * opened on the chosen route and the pieces' gold moves into it.
      *
      * @param  list<int>  $itemIds
@@ -448,7 +449,7 @@ class Production
 
             $items->each(fn ($i) => $i->forceFill(['status' => FinishedItem::REWORK, 'qc_remarks' => trim(($i->qc_remarks ?? '').' Rework: '.$reason)])->save());
             $this->progress->forItems($items);
-            app(\App\Services\Push\Notify::class)->staffWith('production.manage', "Rework {$wo->wo_no}", $reason, "/staff/work-orders/{$wo->id}", 'qc.failed');
+            app(Notify::class)->staffWith('production.manage', "Rework {$wo->wo_no}", $reason, "/staff/work-orders/{$wo->id}", 'qc.failed');
 
             return $wo;
         });

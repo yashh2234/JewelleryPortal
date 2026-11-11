@@ -29,7 +29,7 @@
 
 <table>
     <thead><tr>
-        <th>#</th><th>Tag</th><th>Design</th><th>Karat</th><th>Size</th><th>HUID</th>
+        <th>#</th><th>Tag</th><th>Design</th><th>Karat</th><th>Size</th>
         <th class="right">Gross g</th><th class="right">Stone g</th><th class="right">Net g</th><th class="right">Fine g</th>
     </tr></thead>
     <tbody>
@@ -41,7 +41,6 @@
             <td>{{ $it->design->code }} {{ $it->design->name }}</td>
             <td>{{ $it->karat->label }}</td>
             <td>{{ $it->size }}</td>
-            <td><b>{{ $it->huid ?? '—' }}</b></td>
             <td class="num">{{ $it->gross_wt }}</td>
             <td class="num">{{ $it->stone_wt }}</td>
             <td class="num">{{ $it->net_wt }}</td>
@@ -49,7 +48,7 @@
         </tr>
     @endforeach
     <tr class="total">
-        <td colspan="6">Total</td>
+        <td colspan="5">Total</td>
         <td class="num">{{ $d->gross_wt }}</td><td></td>
         <td class="num">{{ $d->net_wt }}</td>
         <td class="num">{{ $d->fine_wt }}</td>

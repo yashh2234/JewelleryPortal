@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Models\DesignImage;
 use App\Models\Karat;
 use App\Models\Process;
 use App\Models\Tenant;
@@ -9,6 +10,7 @@ use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Storage;
+use Spatie\Permission\Models\Role;
 use Tests\TestCase;
 
 class MastersTest extends TestCase
@@ -71,7 +73,7 @@ class MastersTest extends TestCase
     public function test_wastage_rules_override_process_default_per_karat(): void
     {
         [$process, $k22, $k18] = $this->asTenant($this->tenant, fn () => [
-            Process::where('name', 'Making')->first(), Karat::where('label', '22K')->first(), Karat::where('label', '18K')->first(),
+            Process::where('name', 'Soldering')->first(), Karat::where('label', '22K')->first(), Karat::where('label', '18K')->first(),
         ]);
 
         $this->putJson($this->url("processes/{$process->id}/wastage-rules"), [
@@ -117,7 +119,7 @@ class MastersTest extends TestCase
 
         $image = $upload->json('data.0');
         $this->assertStringEndsWith('.webp', $image['url']);
-        $stored = $this->asTenant($this->tenant, fn () => \App\Models\DesignImage::find($image['id']));
+        $stored = $this->asTenant($this->tenant, fn () => DesignImage::find($image['id']));
         Storage::disk('public')->assertExists([$stored->path, $stored->thumb_path]);
         [$w] = getimagesizefromstring(Storage::disk('public')->get($stored->path));
         $this->assertSame(1600, $w);
@@ -163,7 +165,7 @@ class MastersTest extends TestCase
             'name' => 'Helper', 'email' => 'helper@acme.test', 'password' => 'secret123', 'roles' => ['store_helper'],
         ])->assertCreated()->assertJsonPath('data.permissions', ['kaarigars.view']);
 
-        $this->patchJson($this->url('roles/'.$this->asTenant($this->tenant, fn () => \Spatie\Permission\Models\Role::where('name', 'owner')->value('id'))), ['permissions' => []])
+        $this->patchJson($this->url('roles/'.$this->asTenant($this->tenant, fn () => Role::where('name', 'owner')->value('id'))), ['permissions' => []])
             ->assertUnprocessable();
     }
 

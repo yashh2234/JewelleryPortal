@@ -17,7 +17,7 @@ use Illuminate\Support\Facades\DB;
  * Sales invoice from a dispatch, using the pieces' actual weights:
  *   metal value = net weight × day rate of the karat
  *   making      = retailer's slab (else the design's charge): per gram / per piece / % of metal
- *   + stone + hallmark charges, + GST (CGST+SGST in-state, IGST inter-state)
+ *   + stone charges, + GST (CGST+SGST in-state, IGST inter-state)
  *
  * Terms "cash": the retailer owes the full amount in money.
  * Terms "metal": the retailer settles the metal in fine gold from their metal
@@ -30,7 +30,7 @@ class Invoicing
     public function __construct(private Books $books, private Vouchers $vouchers, private TenantContext $context) {}
 
     /**
-     * @param  array{date?: string, terms?: string, rates?: array<int|string, string>, stone_charges?: array<int|string, string>, hallmark_per_piece?: string}  $opts
+     * @param  array{date?: string, terms?: string, rates?: array<int|string, string>, stone_charges?: array<int|string, string>}  $opts
      * @return array{lines: list<array<string, mixed>>, totals: array<string, string>, terms: string, inter_state: bool, date: string}
      */
     public function preview(Dispatch $dispatch, array $opts = []): array
@@ -53,7 +53,6 @@ class Invoicing
         $tenantState = $this->context->get()->state_code;
         $interState = $tenantState && $retailer->state_code && $tenantState !== $retailer->state_code;
         $slab = $retailer->makingSlab ?? MakingSlab::where('is_default', true)->first();
-        $hmPerPiece = Money::round($opts['hallmark_per_piece'] ?? '0');
 
         $lines = [];
         foreach ($dispatch->lines as $dl) {
@@ -73,7 +72,7 @@ class Invoicing
                 default => Money::mul($item->net_wt, $makingRate),
             };
             $stone = Money::round($opts['stone_charges'][$item->id] ?? '0');
-            $taxable = Money::add($metal, $making, $stone, $hmPerPiece);
+            $taxable = Money::add($metal, $making, $stone);
             $tax = $this->vouchers->gst($taxable, $gstRate, $interState);
 
             $lines[] = [
@@ -81,10 +80,9 @@ class Invoicing
                 'description' => trim("{$item->design->code} {$item->design->name} {$item->karat->label}".($item->size ? " size {$item->size}" : '')),
                 'tag_no' => $item->tag_no,
                 'hsn' => self::HSN,
-                'huid' => $item->huid,
                 'gross_wt' => $item->gross_wt, 'net_wt' => $item->net_wt, 'purity_pct' => $item->purity_pct, 'fine_wt' => $item->fine_wt,
                 'rate' => Money::round($rate), 'metal_value' => $metal, 'making' => $making, 'stone_charge' => $stone,
-                'hallmark_charge' => $hmPerPiece, 'taxable' => $taxable, 'gst_rate' => $gstRate,
+                'taxable' => $taxable, 'gst_rate' => $gstRate,
                 'cgst' => $tax['cgst'], 'sgst' => $tax['sgst'], 'igst' => $tax['igst'],
                 'total' => Money::add($taxable, $tax['cgst'], $tax['sgst'], $tax['igst']),
             ];
@@ -93,7 +91,7 @@ class Invoicing
         $sum = fn (string $k) => Money::add(...array_column($lines, $k));
         $totals = [
             'metal_value' => $sum('metal_value'), 'making' => $sum('making'), 'stone_charge' => $sum('stone_charge'),
-            'hallmark_charge' => $sum('hallmark_charge'), 'taxable' => $sum('taxable'),
+            'taxable' => $sum('taxable'),
             'cgst' => $sum('cgst'), 'sgst' => $sum('sgst'), 'igst' => $sum('igst'), 'total' => $sum('total'),
             'fine_wt' => Weight::add('0', ...array_column($lines, 'fine_wt')),
             'net_wt' => Weight::add('0', ...array_column($lines, 'net_wt')),
@@ -118,7 +116,6 @@ class Invoicing
             ['party' => $party, 'debit' => $t['payable'], 'fine_dr' => $p['terms'] === 'metal' ? $t['fine_wt'] : '0'],
             ['account' => 'making_income', 'credit' => $t['making']],
             ['account' => 'stone_income', 'credit' => $t['stone_charge']],
-            ['account' => 'hallmark_income', 'credit' => $t['hallmark_charge']],
             ['account' => 'output_cgst', 'credit' => $t['cgst']],
             ['account' => 'output_sgst', 'credit' => $t['sgst']],
             ['account' => 'output_igst', 'credit' => $t['igst']],

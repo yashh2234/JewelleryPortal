@@ -6,8 +6,8 @@ use App\Models\FinishedItem;
 use App\Models\JobCard;
 use App\Models\MetalTransaction;
 use App\Models\Order;
-use App\Models\WoStep;
 use App\Models\WorkOrder;
+use App\Models\WoStep;
 use App\Services\Push\Notify;
 
 /**
@@ -19,8 +19,7 @@ use App\Services\Push\Notify;
  *   in_production       work has come back / stages are moving
  *   under_qc            all work orders done, pieces waiting for QC
  *   rework_required     a piece failed QC or is out for rework
- *   production_completed all pieces passed QC, hallmarking still pending
- *   ready_for_dispatch  passed (and hallmarked where the retailer needs it)
+ *   ready_for_dispatch  every piece passed QC
  *
  * Only orders already in one of these statuses are touched: people decide
  * approval, hold, cancel and close; dispatches decide dispatched/delivered.
@@ -93,9 +92,8 @@ class OrderProgress
             if ($items->contains(fn ($i) => $i->qc_status === 'pending')) {
                 return Order::UNDER_QC;
             }
-            $needsHuid = $order->retailer?->hallmark_mandatory && $items->contains(fn ($i) => ! $i->huid);
 
-            return $needsHuid ? Order::PRODUCTION_COMPLETED : Order::READY_FOR_DISPATCH;
+            return Order::READY_FOR_DISPATCH;
         }
 
         $cardIds = JobCard::whereIn('wo_step_id', WoStep::whereIn('work_order_id', $woIds)->select('id'))->pluck('id');

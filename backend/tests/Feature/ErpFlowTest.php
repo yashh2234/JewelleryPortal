@@ -9,12 +9,12 @@ use App\Models\Kaarigar;
 use App\Models\Karat;
 use App\Models\MetalTransaction;
 use App\Models\Order;
+use App\Models\Process;
 use App\Models\Retailer;
 use App\Models\Tenant;
 use App\Models\User;
-use App\Services\Metal\MetalOperations;
-use App\Services\Production\Production;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
@@ -61,7 +61,7 @@ class ErpFlowTest extends TestCase
     {
         [$design, $retailer] = $this->asTenant($this->tenant, fn () => [
             Design::create(['code' => 'KD-'.uniqid(), 'name' => 'Kada', 'production_days' => 12]),
-            $retailer ?? Retailer::create(['shop_name' => 'Sharma', 'status' => 'active', 'hallmark_mandatory' => false]),
+            $retailer ?? Retailer::create(['shop_name' => 'Sharma', 'status' => 'active']),
         ]);
         $order = $this->as()->postJson($this->api('orders'), ['retailer_id' => $retailer->id, 'lines' => [['design_id' => $design->id, 'karat_id' => $this->k22, 'qty' => 2]]])->json('data');
         $this->as()->postJson($this->api("orders/{$order['id']}/approve"))->assertOk();
@@ -74,7 +74,7 @@ class ErpFlowTest extends TestCase
     public function test_loose_issue_needs_a_work_order_and_work_order_id_picks_the_stage(): void
     {
         [, $wo] = $this->orderWithWo();
-        $process = $this->asTenant($this->tenant, fn () => \App\Models\Process::value('id'));
+        $process = $this->asTenant($this->tenant, fn () => Process::value('id'));
 
         $this->as()->postJson($this->api('metal/issue'), [
             'source' => 'vault', 'kaarigar_id' => $this->ramesh->id, 'process_id' => $process, 'karat_id' => $this->k22,
@@ -144,7 +144,7 @@ class ErpFlowTest extends TestCase
             ->assertJsonPath('profile.limit', '20.000')->assertJsonPath('profile.gold_held.fine', '18.320');
     }
 
-    public function test_excess_wastage_blocks_issue_and_work_order_completion(): void
+    public function test_unapproved_difference_blocks_issue_and_work_order_completion(): void
     {
         [$order, $wo, $step] = $this->orderWithWo();
         $tx = $this->as()->postJson($this->api("work-orders/{$wo['id']}/issue"), [
@@ -152,14 +152,14 @@ class ErpFlowTest extends TestCase
         ])->json('data');
         // 10 g gross missing: far above any allowed wastage.
         $this->as()->postJson($this->api('metal/receive'), ['job_card_id' => $tx['job_card']['id'], 'destination' => 'wo', 'work' => ['gross' => '40'], 'close' => true])->assertCreated();
-        $this->assertTrue(\Illuminate\Support\Facades\DB::table('app_notifications')->where('event', 'gold.mismatch')->exists());
+        $this->assertTrue(DB::table('app_notifications')->where('event', 'gold.mismatch')->exists());
 
         $this->as()->getJson($this->api("metal/issue-check?kaarigar_id={$this->ramesh->id}"))->assertJsonCount(1, 'blockers');
 
         $this->as()->postJson($this->api("work-orders/{$wo['id']}/finish"), ['pieces' => [['gross' => '19'], ['gross' => '19']]])->assertCreated();
         $this->as()->postJson($this->api("work-orders/{$wo['id']}/complete"))->assertUnprocessable();
 
-        $this->as()->postJson($this->api("job-cards/{$tx['job_card']['id']}/write-off-excess"), ['reason' => 'Checked, polishing dust lost'])->assertSuccessful();
+        $this->as()->postJson($this->api("job-cards/{$tx['job_card']['id']}/approve-loss"), ['reason_code' => 'polishing_loss', 'note' => 'Checked, polishing dust lost'])->assertSuccessful();
         $this->as()->postJson($this->api("work-orders/{$wo['id']}/complete"))->assertOk();
         $this->as()->getJson($this->api("orders/{$order['id']}"))->assertJsonPath('data.status', 'under_qc');
     }
@@ -172,9 +172,12 @@ class ErpFlowTest extends TestCase
         ])->json('data');
         $this->as()->postJson($this->api('metal/receive'), ['job_card_id' => $tx['job_card']['id'], 'destination' => 'wo', 'work' => ['gross' => '49.9'], 'close' => true])->assertCreated();
         $items = $this->as()->postJson($this->api("work-orders/{$wo['id']}/finish"), ['pieces' => [['gross' => '24.8'], ['gross' => '24.9']]])->json('data');
+        // Blueprint rule 4: even a difference within the allowed % is approved before the WO closes.
+        $this->as()->postJson($this->api("work-orders/{$wo['id']}/complete"))->assertUnprocessable();
+        $this->as()->postJson($this->api("job-cards/{$tx['job_card']['id']}/approve-loss"), ['reason_code' => 'process_loss', 'note' => 'Normal'])->assertOk();
         $this->as()->postJson($this->api("work-orders/{$wo['id']}/complete"))->assertOk();
 
-        $polish = $this->asTenant($this->tenant, fn () => \App\Models\Process::where('name', 'Polishing')->value('id'));
+        $polish = $this->asTenant($this->tenant, fn () => Process::where('name', 'Polishing')->value('id'));
         $this->as()->postJson($this->api('finished-items/qc'), ['item_ids' => [$items[1]['id']], 'result' => 'failed'])->assertUnprocessable();   // defects needed
 
         $res = $this->as()->postJson($this->api('finished-items/qc'), [
@@ -214,7 +217,7 @@ class ErpFlowTest extends TestCase
         // Customisation + reference photo before approval.
         $line = $as()->getJson($portal("orders/{$order['id']}"))->json('data.lines.0.id');
         $as()->post($portal("orders/{$order['id']}/lines/{$line}"), ['customization' => 'Name engraved: Priya',
-            'reference' => \Illuminate\Http\UploadedFile::fake()->image('ref.jpg', 400, 400)])->assertOk();
+            'reference' => UploadedFile::fake()->image('ref.jpg', 400, 400)])->assertOk();
         $as()->getJson($portal("orders/{$order['id']}"))->assertJsonPath('data.lines.0.customization', 'Name engraved: Priya')
             ->assertJsonPath('data.editable', true)->assertJsonPath('data.payments.status', 'unpaid');
 

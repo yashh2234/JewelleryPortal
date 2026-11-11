@@ -66,13 +66,13 @@ export default function WorkOrderPage() {
       {wo.finished_items.length > 0 && (
         <Card className="mt-4">
           <CardHeader title={`Finished pieces (${wo.finished_items.length})`} actions={<Link to="/staff/finished"><Button size="sm" variant="ghost">Finished goods →</Button></Link>} />
-          <Table head={['Tag', 'Size', 'Gross', 'Stone', 'Net', 'Fine', 'QC', 'HUID', 'Status']}>
+          <Table head={['Tag', 'Size', 'Gross', 'Stone', 'Net', 'Fine', 'QC', 'Status']}>
             {wo.finished_items.map((i) => (
               <tr key={i.id}>
                 <Td className="font-mono text-xs">{i.tag_no}</Td><Td>{i.size}</Td>
                 <Td className="tabular">{i.gross_wt}</Td><Td className="tabular">{i.stone_wt}</Td><Td className="tabular">{i.net_wt}</Td><Td className="tabular">{i.fine_wt}</Td>
                 <Td><Badge tone={i.qc_status === 'passed' ? 'success' : i.qc_status === 'failed' ? 'danger' : 'neutral'}>{i.qc_status}</Badge></Td>
-                <Td className="font-mono">{i.huid ?? '—'}</Td><Td>{i.status.replace('_', ' ')}</Td>
+                <Td>{i.status.replace('_', ' ')}</Td>
               </tr>
             ))}
           </Table>

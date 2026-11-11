@@ -1,6 +1,5 @@
 import { Navigate, Route, Routes } from 'react-router'
 import { Layout } from './layout'
-import DaybookPage from './metal/DaybookPage'
 import IssuePage from './metal/IssuePage'
 import JobCardsPage from './metal/JobCardsPage'
 import KaarigarLedgerPage from './metal/KaarigarLedgerPage'
@@ -8,9 +7,7 @@ import ReceivePage from './metal/ReceivePage'
 import RequestsPage from './metal/RequestsPage'
 import TransactionsPage from './metal/TransactionsPage'
 import VaultPage from './metal/VaultPage'
-import WastagePage from './metal/WastagePage'
 import FinishedPage from './production/FinishedPage'
-import { HallmarkingPage, HallmarkLotPage } from './production/HallmarkPages'
 import ShipmentsPage from './production/ShipmentsPage'
 import OrderDetailPage from './production/OrderDetailPage'
 import OrdersPage from './production/OrdersPage'
@@ -47,18 +44,14 @@ export default function StaffApp() {
         <Route path="metal/receive" element={<ReceivePage />} />
         <Route path="metal/job-cards" element={<JobCardsPage />} />
         <Route path="metal/vault" element={<VaultPage />} />
-        <Route path="metal/daybook" element={<DaybookPage />} />
         <Route path="metal/requests" element={<RequestsPage />} />
         <Route path="metal/transactions" element={<TransactionsPage />} />
-        <Route path="metal/wastage" element={<WastagePage />} />
         <Route path="orders" element={<OrdersPage />} />
         <Route path="orders/:id" element={<OrderDetailPage />} />
         <Route path="production" element={<BoardPage />} />
         <Route path="work-orders" element={<WorkOrdersPage />} />
         <Route path="work-orders/:id" element={<WorkOrderPage />} />
         <Route path="finished" element={<FinishedPage />} />
-        <Route path="hallmarking" element={<HallmarkingPage />} />
-        <Route path="hallmarking/:id" element={<HallmarkLotPage />} />
         <Route path="dispatches" element={<ShipmentsPage />} />
         <Route path="accounts/vouchers" element={<VouchersPage />} />
         <Route path="accounts/bill/:id" element={<BillPage />} />

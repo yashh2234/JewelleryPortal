@@ -8,8 +8,8 @@ interface Preview {
   terms: 'cash' | 'metal'
   inter_state: boolean
   date: string
-  lines: { finished_item_id: number; tag_no: string; description: string; huid: string | null; net_wt: string; fine_wt: string; rate: string; metal_value: string; making: string; stone_charge: string; hallmark_charge: string; taxable: string; gst_rate: string; cgst: string; sgst: string; igst: string; total: string }[]
-  totals: Record<'metal_value' | 'making' | 'stone_charge' | 'hallmark_charge' | 'taxable' | 'cgst' | 'sgst' | 'igst' | 'total' | 'payable' | 'fine_wt' | 'net_wt', string>
+  lines: { finished_item_id: number; tag_no: string; description: string; net_wt: string; fine_wt: string; rate: string; metal_value: string; making: string; stone_charge: string; taxable: string; gst_rate: string; cgst: string; sgst: string; igst: string; total: string }[]
+  totals: Record<'metal_value' | 'making' | 'stone_charge' | 'taxable' | 'cgst' | 'sgst' | 'igst' | 'total' | 'payable' | 'fine_wt' | 'net_wt', string>
 }
 
 const inr = (v: string) => Number(v).toLocaleString('en-IN', { minimumFractionDigits: 2 })
@@ -19,13 +19,12 @@ export default function BillPage() {
   const { id } = useParams()
   const [terms, setTerms] = useState('')
   const [date, setDate] = useState(today())
-  const [hm, setHm] = useState('0')
   const [stones, setStones] = useState<Record<number, string>>({})
 
-  const opts = { date, ...(terms ? { terms } : {}), hallmark_per_piece: hm || '0', stone_charges: Object.fromEntries(Object.entries(stones).filter(([, v]) => v)) }
+  const opts = { date, ...(terms ? { terms } : {}), stone_charges: Object.fromEntries(Object.entries(stones).filter(([, v]) => v)) }
   const preview = useQuery({
     queryKey: ['invoice-preview', id, JSON.stringify(opts)],
-    queryFn: () => api.get<Preview>(`/api/v1/dispatches/${id}/invoice-preview?${new URLSearchParams({ date, hallmark_per_piece: opts.hallmark_per_piece, ...(terms ? { terms } : {}), ...Object.fromEntries(Object.entries(opts.stone_charges).map(([k, v]) => [`stone_charges[${k}]`, v])) })}`),
+    queryFn: () => api.get<Preview>(`/api/v1/dispatches/${id}/invoice-preview?${new URLSearchParams({ date, ...(terms ? { terms } : {}), ...Object.fromEntries(Object.entries(opts.stone_charges).map(([k, v]) => [`stone_charges[${k}]`, v])) })}`),
     retry: false,
   })
   const post = useMutation({ mutationFn: () => api.post<{ data: { id: number; voucher_no: string } }>(`/api/v1/invoices/from-dispatch/${id}`, opts) })
@@ -53,18 +52,16 @@ export default function BillPage() {
             <option value="metal">Metal account (gold from deposit)</option>
           </Select>
         </Field>
-        <Field label="Hallmark ₹ / piece"><Input className="w-28" inputMode="decimal" value={hm} onChange={(e) => setHm(e.target.value)} /></Field>
         {p && <p className="pb-2 text-sm">{p.inter_state ? 'Inter-state: IGST' : 'Intra-state: CGST + SGST'}</p>}
       </Card>
 
       {p && (
         <Card>
           <CardHeader title={`${p.lines.length} pieces · ${p.totals.net_wt} g net · ${p.totals.fine_wt} g fine`} />
-          <Table head={['Piece', 'HUID', 'Net g', 'Rate', 'Metal ₹', 'Making ₹', 'Stone ₹', 'Taxable ₹', 'GST ₹', 'Total ₹']}>
+          <Table head={['Piece', 'Net g', 'Rate', 'Metal ₹', 'Making ₹', 'Stone ₹', 'Taxable ₹', 'GST ₹', 'Total ₹']}>
             {p.lines.map((l) => (
               <tr key={l.finished_item_id}>
                 <Td className="text-xs">{l.description}<div className="font-mono text-muted-foreground">{l.tag_no}</div></Td>
-                <Td className="font-mono">{l.huid}</Td>
                 <Td className="tabular">{l.net_wt}</Td>
                 <Td className="tabular">{inr(l.rate)}</Td>
                 <Td className="tabular">{inr(l.metal_value)}</Td>

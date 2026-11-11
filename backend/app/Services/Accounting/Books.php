@@ -3,11 +3,11 @@
 namespace App\Services\Accounting;
 
 use App\Models\Account;
-use App\Models\Ahc;
 use App\Models\FinancialYear;
 use App\Models\Kaarigar;
 use App\Models\Party;
 use App\Models\Retailer;
+use App\Models\TaxSetting;
 use App\Models\Voucher;
 use App\Models\VoucherEntry;
 use App\Services\Metal\LedgerException;
@@ -35,7 +35,7 @@ class Books
         ['1210', 'Input CGST', 'asset', 'Duties & taxes', 'input_cgst'],
         ['1211', 'Input SGST', 'asset', 'Duties & taxes', 'input_sgst'],
         ['1212', 'Input IGST', 'asset', 'Duties & taxes', 'input_igst'],
-        ['2000', 'Sundry creditors (suppliers, refiners, AHC)', 'liability', 'Creditors', 'creditors'],
+        ['2000', 'Sundry creditors (suppliers, refiners)', 'liability', 'Creditors', 'creditors'],
         ['2100', 'Kaarigar accounts', 'liability', 'Kaarigars', 'kaarigars'],
         ['2200', 'Output CGST', 'liability', 'Duties & taxes', 'output_cgst'],
         ['2201', 'Output SGST', 'liability', 'Duties & taxes', 'output_sgst'],
@@ -44,13 +44,11 @@ class Books
         ['4000', 'Sales: gold jewellery', 'income', 'Sales', 'sales_gold'],
         ['4010', 'Making charges income', 'income', 'Sales', 'making_income'],
         ['4020', 'Stone & other charges income', 'income', 'Sales', 'stone_income'],
-        ['4030', 'Hallmarking charges recovered', 'income', 'Sales', 'hallmark_income'],
         ['4040', 'Wastage recovered from kaarigars', 'income', 'Other income', 'wastage_recovery'],
         ['4050', 'Job-work income', 'income', 'Sales', 'jobwork_income'],
         ['5000', 'Purchases: gold & bullion', 'expense', 'Purchases', 'purchases'],
         ['5010', 'Kaarigar labour', 'expense', 'Direct expenses', 'labour'],
         ['5020', 'Refining charges', 'expense', 'Direct expenses', 'refining'],
-        ['5030', 'Hallmarking charges', 'expense', 'Direct expenses', 'hallmarking'],
         ['5040', 'Wastage / metal loss', 'expense', 'Direct expenses', 'wastage'],
         ['5050', 'Salaries', 'expense', 'Indirect expenses', 'salaries'],
         ['5060', 'Rent', 'expense', 'Indirect expenses', 'rent'],
@@ -68,7 +66,7 @@ class Books
             Account::create(['code' => $code, 'name' => $name, 'nature' => $nature, 'group' => $group, 'system_key' => $key]);
         }
 
-        \App\Models\TaxSetting::create([
+        TaxSetting::create([
             'hsn' => '7113', 'description' => 'Articles of jewellery of precious metal (gold)', 'gst_rate' => '3.00', 'effective_from' => '2017-07-01',
         ]);
     }
@@ -80,13 +78,12 @@ class Books
         return Account::where('system_key', $systemKey)->firstOr(fn () => throw new LedgerException("Account [{$systemKey}] is missing from the chart of accounts."));
     }
 
-    /** The accounting party for a retailer, kaarigar or AHC (created on first use). */
+    /** The accounting party for a retailer or kaarigar (created on first use). */
     public function party(Model $ref): Party
     {
         $type = match (true) {
             $ref instanceof Retailer => 'retailer',
             $ref instanceof Kaarigar => 'kaarigar',
-            $ref instanceof Ahc => 'ahc',
             default => throw new LedgerException('Unsupported party.'),
         };
 
@@ -120,7 +117,7 @@ class Books
 
     /**
      * @param  list<array{account: Account|string, party?: Party|null, debit?: string, credit?: string, fine_dr?: string, fine_cr?: string, memo?: string|null}>  $entries
-     *         `account` may be a system key; a party line with no account uses the party's control account.
+     *                                                                                                                                                                      `account` may be a system key; a party line with no account uses the party's control account.
      */
     public function post(string $type, string $date, ?Party $party, array $entries, array $extra = []): Voucher
     {

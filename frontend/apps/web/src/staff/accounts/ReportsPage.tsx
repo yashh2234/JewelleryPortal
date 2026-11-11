@@ -36,16 +36,14 @@ export default function ReportsPage() {
 
   return (
     <>
-      <PageTitle title="Accounting reports">
-        <a href={`/api/v1/accounting-reports/tally?from=${from}&to=${to}`}><Button variant="outline"><Download /> Tally XML</Button></a>
-      </PageTitle>
+      <PageTitle title="Accounting reports" />
       <div className="mb-3 flex flex-wrap gap-1">
         {TABS.map(([k, label]) => <Button key={k} size="sm" variant={tab === k ? 'default' : 'ghost'} onClick={() => setTab(k)}>{label}</Button>)}
       </div>
       <Card className="mb-4 flex flex-wrap items-end gap-3 p-3">
         {['pnl', 'cash-book', 'gst'].includes(tab) && <Field label="From"><Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} /></Field>}
         <Field label={['pnl', 'cash-book', 'gst'].includes(tab) ? 'To' : 'As on'}><Input type="date" max={today()} value={to} onChange={(e) => setTo(e.target.value)} /></Field>
-        {tab === 'outstanding' && <Field label="Parties"><Select value={type} onChange={(e) => setType(e.target.value)}>{['retailer', 'supplier', 'kaarigar', 'refiner', 'ahc'].map((t) => <option key={t} value={t}>{t}</option>)}</Select></Field>}
+        {tab === 'outstanding' && <Field label="Parties"><Select value={type} onChange={(e) => setType(e.target.value)}>{['retailer', 'supplier', 'kaarigar', 'refiner'].map((t) => <option key={t} value={t}>{t}</option>)}</Select></Field>}
         {tab === 'cash-book' && <Field label="Book"><Select value={account} onChange={(e) => setAccount(e.target.value)}><option value="cash">Cash</option><option value="bank">Bank</option></Select></Field>}
         {d?.balanced !== undefined && <Badge tone={d.balanced ? 'success' : 'danger'} className="mb-2">{d.balanced ? 'Balanced' : 'Does not balance'}</Badge>}
       </Card>

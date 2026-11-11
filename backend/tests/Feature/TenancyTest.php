@@ -5,7 +5,9 @@ namespace Tests\Feature;
 use App\Models\Design;
 use App\Models\Karat;
 use App\Models\Tenant;
+use App\Models\User;
 use App\Support\NumberSeries;
+use Database\Seeders\PlanSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use LogicException;
 use Tests\TestCase;
@@ -16,7 +18,7 @@ class TenancyTest extends TestCase
 
     public function test_signup_provisions_a_ready_workspace(): void
     {
-        $this->seed(\Database\Seeders\PlanSeeder::class);
+        $this->seed(PlanSeeder::class);
 
         $this->postJson('http://yourapp.test/api/platform/signup', [
             'name' => 'Shree Gold',
@@ -32,7 +34,7 @@ class TenancyTest extends TestCase
 
         $this->asTenant($tenant, function () {
             $this->assertSame('91.600', Karat::where('label', '22K')->value('purity_pct'));
-            $owner = \App\Models\User::where('email', 'owner@shree.test')->firstOrFail();
+            $owner = User::where('email', 'owner@shree.test')->firstOrFail();
             $this->assertTrue($owner->hasRole('owner'));
             $this->assertTrue($owner->can('metal.issue'));
         });

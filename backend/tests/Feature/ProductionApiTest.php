@@ -5,10 +5,12 @@ namespace Tests\Feature;
 use App\Models\Design;
 use App\Models\Kaarigar;
 use App\Models\Karat;
+use App\Models\Order;
 use App\Models\Retailer;
 use App\Models\Tenant;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
 class ProductionApiTest extends TestCase
@@ -89,6 +91,8 @@ class ProductionApiTest extends TestCase
         $items = $this->as()->postJson($this->api("work-orders/{$wo['id']}/finish"), [
             'pieces' => [['gross' => '24.8', 'size' => '2.6'], ['gross' => '24.9', 'size' => '2.6']],
         ])->assertCreated()->json('data');
+        // The 0.1 g difference on the melting card is approved before the WO can close (blueprint rule 4).
+        $this->as()->postJson($this->api("job-cards/{$issue['job_card']['id']}/approve-loss"), ['reason_code' => 'process_loss', 'note' => 'Melting'])->assertOk();
         $this->as()->postJson($this->api("work-orders/{$wo['id']}/complete"))->assertOk()->assertJsonPath('data.status', 'completed');
         $this->as()->getJson($this->api("orders/{$order['id']}"))->assertJsonPath('data.status', 'under_qc');
 
@@ -96,23 +100,9 @@ class ProductionApiTest extends TestCase
         // Passing needs the whole checklist.
         $this->as()->postJson($this->api('finished-items/qc'), ['item_ids' => $ids, 'result' => 'passed', 'checklist' => ['stone_setting' => false]])->assertUnprocessable();
         $this->as()->postJson($this->api('finished-items/qc'), ['item_ids' => $ids, 'result' => 'passed'])->assertOk()->assertJsonPath('updated', 2);
-        // Passed but not yet hallmarked (Sharma needs HUIDs) → production completed, not yet ready.
-        $this->as()->getJson($this->api("orders/{$order['id']}"))->assertJsonPath('data.status', 'production_completed');
-
-        $ahc = $this->as()->postJson($this->api('ahcs'), ['name' => 'Pune AHC', 'charge_per_piece' => '45'])->assertCreated()->json('data');
-        $lot = $this->as()->postJson($this->api('hallmark-lots'), ['ahc_id' => $ahc['id'], 'karat_id' => $k22, 'item_ids' => $ids])->assertCreated()->json('data');
-        $this->as()->postJson($this->api("hallmark-lots/{$lot['id']}/send"), ['manak_request_no' => 'MR-991'])->assertOk();
-        $this->as()->get($this->api("hallmark-lots/{$lot['id']}/sheet"))->assertOk()->assertHeader('content-type', 'application/pdf');
-
-        $csv = "tag,huid\n{$items[0]['tag_no']},AB12CD\n{$items[1]['tag_no']},XY34ZW";
-        $parsed = $this->as()->postJson($this->api("hallmark-lots/{$lot['id']}/huids/import"), ['text' => $csv])->assertOk()->json('data');
-        $this->assertSame('XY34ZW', $parsed[1]['huid']);
-
-        $this->as()->postJson($this->api("hallmark-lots/{$lot['id']}/return"), ['results' => $parsed])
-            ->assertOk()->assertJsonPath('data.status', 'returned');
-
-        $this->as()->getJson($this->api('finished-items?search=AB12CD'))->assertJsonPath('total', 1);
+        // QC passed → ready for dispatch (no hallmarking step).
         $this->as()->getJson($this->api("orders/{$order['id']}"))->assertJsonPath('data.status', 'ready_for_dispatch');
+        $this->as()->getJson($this->api('hallmark-lots'))->assertNotFound();
 
         $dispatch = $this->as()->postJson($this->api('dispatches'), [
             'retailer_id' => $retailer->id, 'order_id' => $order['id'], 'item_ids' => $ids,
@@ -131,7 +121,7 @@ class ProductionApiTest extends TestCase
         $this->as()->postJson($this->api("orders/{$order['id']}/close"))->assertOk()->assertJsonPath('data.status', 'closed');
 
         // The retailer heard about it in the app as well.
-        $this->assertTrue(\Illuminate\Support\Facades\DB::table('app_notifications')->where('user_type', 'staff')->exists());
+        $this->assertTrue(DB::table('app_notifications')->where('user_type', 'staff')->exists());
     }
 
     public function test_roles_split_production_and_gold(): void
@@ -150,7 +140,7 @@ class ProductionApiTest extends TestCase
         $this->as($orders)->postJson($this->api("work-orders/{$wo['id']}/issue"), [])->assertForbidden();
         // Quality manager can't create work orders; dispatch manager can't approve orders.
         $this->as($this->staffWithRole($this->tenant, 'quality_manager'))->postJson($this->api('work-orders'), ['design_id' => $design->id, 'karat_id' => $k22, 'qty' => 1])->assertForbidden();
-        $orderId = $this->asTenant($this->tenant, fn () => \App\Models\Order::create([
+        $orderId = $this->asTenant($this->tenant, fn () => Order::create([
             'order_no' => 'ORD-T1', 'retailer_id' => Retailer::create(['shop_name' => 'R', 'status' => 'active'])->id, 'status' => 'pending_approval',
         ])->id);
         $this->as($this->staffWithRole($this->tenant, 'dispatch_manager'))->postJson($this->api("orders/{$orderId}/approve"))->assertForbidden();

@@ -2,14 +2,19 @@
 
 namespace Database\Seeders;
 
+use App\Models\Category;
+use App\Models\Design;
 use App\Models\GoldRate;
 use App\Models\Kaarigar;
 use App\Models\Karat;
+use App\Models\LabourRate;
 use App\Models\PlatformAdmin;
-use App\Models\Plan;
+use App\Models\Process;
 use App\Models\Retailer;
 use App\Models\Tenant;
 use App\Models\User;
+use App\Services\Metal\MetalOperations;
+use App\Services\Production\Production;
 use App\Services\Tenancy\TenantProvisioner;
 use App\Support\Tenancy\TenantContext;
 use Illuminate\Database\Seeder;
@@ -21,7 +26,7 @@ use Illuminate\Database\Seeder;
  *   Staff app   acme  owner@acme.test / password   (also metal@acme.test)
  *   Portal            shop@sharma.test / password
  *   Super-admin       /app/admin  admin@platform.test / password
- *   Kaarigar app      9876500001 (Ramesh), 9876500002 (Imran), 9876500003 (Suresh); OTP in the log
+ *   Kaarigar app      9876500001 (Ramesh), 9876500002 (Imran, under head Suresh), 9876500003 (Suresh); OTP in the log
  */
 class DatabaseSeeder extends Seeder
 {
@@ -63,14 +68,16 @@ class DatabaseSeeder extends Seeder
             Retailer::create(['shop_name' => 'Verma Gold House', 'city' => 'Nagpur', 'status' => Retailer::STATUS_PENDING]);
 
             // Gold ledger demo: opening stock, one closed job card, one still on the bench.
-            $ops = app(\App\Services\Metal\MetalOperations::class);
+            $ops = app(MetalOperations::class);
             $k22 = Karat::where('label', '22K')->first();
-            $making = \App\Models\Process::where('name', 'Making')->first();
+            $making = Process::where('name', 'Soldering')->first();
             $ops->purchase([['karat_id' => $k22->id, 'gross' => '1000.000']], ['party_name' => 'Opening stock'], opening: true);
             // Labour is billed automatically when a job card closes.
-            \App\Models\LabourRate::create(['process_id' => $making->id, 'basis' => 'per_gram', 'rate' => '150']);
+            LabourRate::create(['process_id' => $making->id, 'basis' => 'per_gram', 'rate' => '150']);
 
-            [$ramesh, , $suresh] = Kaarigar::orderBy('id')->get()->all();
+            [$ramesh, $imran, $suresh] = Kaarigar::orderBy('id')->get()->all();
+            // Blueprint §2: Suresh is a head kaarigar with Imran working under him.
+            $imran->update(['head_kaarigar_id' => $suresh->id]);
             $card = $ops->openJobCard(['kaarigar_id' => $ramesh->id, 'process_id' => $making->id, 'karat_id' => $k22->id, 'description' => '50 Classic kade']);
             $ops->issue($card, [['karat_id' => $k22->id, 'gross' => '100.000']], 'vault', []);
             $ops->receive($card, ['gross' => '98.400', 'pieces' => 50], ['gross' => '0.200'], 'finished', []);
@@ -79,16 +86,15 @@ class DatabaseSeeder extends Seeder
             $card = $ops->openJobCard(['kaarigar_id' => $suresh->id, 'process_id' => $making->id, 'karat_id' => $k22->id, 'description' => '20 Temple bangles', 'due_date' => today()->addDays(3)->toDateString()]);
             $ops->issue($card, [['karat_id' => $k22->id, 'gross' => '60.000']], 'vault', []);
 
-            // Production demo: an AHC and a confirmed order with its work order on the board.
-            \App\Models\Ahc::create(['name' => 'Pune Hallmarking Centre', 'city' => 'Pune', 'charge_per_piece' => '45']);
-            $kada = \App\Models\Design::create([
+            // Production demo: a confirmed order with its work order on the board.
+            $kada = Design::create([
                 'code' => 'KD-101', 'name' => 'Classic kada', 'is_published' => true,
-                'category_id' => \App\Models\Category::where('name', 'Kada')->value('id'),
+                'category_id' => Category::where('name', 'Kada')->value('id'),
                 'approx_weight_min' => '18', 'approx_weight_max' => '22', 'sizes' => ['2.4', '2.6', '2.8'],
                 'making_charge' => '450', 'making_type' => 'per_gram',
             ]);
             $kada->karats()->sync([$k22->id]);
-            $production = app(\App\Services\Production\Production::class);
+            $production = app(Production::class);
             $order = $production->createOrder($retailer, [
                 ['design_id' => $kada->id, 'karat_id' => $k22->id, 'size' => '2.4', 'qty' => 10, 'target_wt_min' => '18', 'target_wt_max' => '22'],
                 ['design_id' => $kada->id, 'karat_id' => $k22->id, 'size' => '2.6', 'qty' => 15, 'target_wt_min' => '18', 'target_wt_max' => '22'],

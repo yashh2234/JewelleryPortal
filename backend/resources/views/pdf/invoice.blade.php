@@ -1,7 +1,6 @@
 @php
     $t = $v->meta['totals'] ?? [];
     $metalTerms = ($v->meta['terms'] ?? 'cash') === 'metal';
-    $irn = $v->meta['einvoice']['irn'] ?? null;
     $inr = fn ($n) => number_format((float) $n, 2);
 @endphp
 <!doctype html>
@@ -31,13 +30,12 @@
     <td class="box">
         <span class="muted">Terms</span> <b>{{ $metalTerms ? 'Metal account' : 'Cash' }}</b><br>
         <span class="muted">Supply</span> <b>{{ ($v->meta['inter_state'] ?? false) ? 'Inter-state (IGST)' : 'Intra-state (CGST + SGST)' }}</b>
-        @if($irn)<br><span class="muted">IRN</span> <span style="font-size:7px">{{ $irn }}</span>@endif
     </td>
 </tr></table>
 
 <table>
     <thead><tr>
-        <th>#</th><th>Description</th><th>HSN</th><th>HUID</th>
+        <th>#</th><th>Description</th><th>HSN</th>
         <th class="right">Net g</th><th class="right">Rate ₹/g</th><th class="right">Metal ₹</th><th class="right">Making ₹</th>
         <th class="right">Other ₹</th><th class="right">Taxable ₹</th><th class="right">GST</th><th class="right">Total ₹</th>
     </tr></thead>
@@ -47,12 +45,11 @@
             <td>{{ $i + 1 }}</td>
             <td>{{ $l->description }}<br><span class="muted">gross {{ $l->gross_wt }} · {{ $l->purity_pct }}% · fine {{ $l->fine_wt }}</span></td>
             <td>{{ $l->hsn }}</td>
-            <td><b>{{ $l->huid }}</b></td>
             <td class="num">{{ $l->net_wt }}</td>
             <td class="num">{{ $inr($l->rate) }}</td>
             <td class="num">{{ $inr($l->metal_value) }}</td>
             <td class="num">{{ $inr($l->making) }}</td>
-            <td class="num">{{ $inr($l->stone_charge + $l->hallmark_charge) }}</td>
+            <td class="num">{{ $inr($l->stone_charge) }}</td>
             <td class="num">{{ $inr($l->taxable) }}</td>
             <td class="num">{{ $l->gst_rate }}%</td>
             <td class="num">{{ $inr($l->total) }}</td>

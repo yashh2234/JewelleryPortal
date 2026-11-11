@@ -1,17 +1,18 @@
 <?php
 
-use App\Http\Controllers\NotificationController;
 use App\Http\Controllers\Auth\PasswordResetController;
 use App\Http\Controllers\Auth\PushSubscriptionController;
 use App\Http\Controllers\Auth\SessionController;
 use App\Http\Controllers\Kaarigar\AppController as KaarigarApp;
 use App\Http\Controllers\Kaarigar\AuthController as KaarigarAuth;
+use App\Http\Controllers\NotificationController;
 use App\Http\Controllers\Platform\AdminController;
 use App\Http\Controllers\Platform\SignupController;
 use App\Http\Controllers\Portal;
 use App\Http\Controllers\Portal\AuthController as PortalAuth;
 use App\Http\Controllers\Staff;
 use App\Http\Controllers\Staff\AuthController as StaffAuth;
+use App\Models\User;
 use App\Support\Permissions as P;
 use App\Support\Tenancy\TenantContext;
 use Illuminate\Support\Facades\Route;
@@ -75,7 +76,7 @@ Route::middleware('tenant')->group(function () {
             // Reference data any staff user can read (pickers, dropdowns).
             Route::get('karats', [Staff\KaratController::class, 'index']);
             // Names only, for "assigned to" / "salesperson" pickers.
-            Route::get('staff-directory', fn () => response()->json(['data' => \App\Models\User::where('is_active', true)->orderBy('name')->get(['id', 'name'])]));
+            Route::get('staff-directory', fn () => response()->json(['data' => User::where('is_active', true)->orderBy('name')->get(['id', 'name'])]));
             Route::get('processes', [Staff\ProcessController::class, 'index']);
             Route::get('categories', [Staff\CategoryController::class, 'index']);
             Route::get('collections', [Staff\CollectionController::class, 'index']);
@@ -145,13 +146,10 @@ Route::middleware('tenant')->group(function () {
                 Route::get('metal/transactions', [Staff\MetalController::class, 'transactions']);
                 Route::get('metal/transactions/{transaction}', [Staff\MetalController::class, 'show']);
                 Route::get('metal/transactions/{transaction}/slip', [Staff\MetalController::class, 'slip']);
-                Route::get('metal/daybook', [Staff\MetalController::class, 'daybook']);
-                Route::get('metal/closings', [Staff\MetalController::class, 'closings']);
                 Route::get('job-cards', [Staff\JobCardController::class, 'index']);
                 Route::get('job-cards/{jobCard}', [Staff\JobCardController::class, 'show']);
                 Route::get('kaarigars/{kaarigar}/ledger', [Staff\KaarigarLedgerController::class, 'show']);
                 Route::get('kaarigars/{kaarigar}/ledger.pdf', [Staff\KaarigarLedgerController::class, 'pdf']);
-                Route::get('reports/wastage', [Staff\KaarigarLedgerController::class, 'wastage']);
             });
 
             Route::middleware('permission:'.P::METAL_ISSUE)->group(function () {
@@ -159,6 +157,10 @@ Route::middleware('tenant')->group(function () {
                 Route::post('metal/issue', [Staff\MetalController::class, 'issue']);
                 Route::get('metal/issue-check', [Staff\MetalController::class, 'issueCheck']);
                 Route::post('metal/transactions/{transaction}/acknowledge', [Staff\MetalController::class, 'acknowledge']);
+                // Kaarigar → kaarigar custody (blueprint §2).
+                Route::post('job-cards/{jobCard}/allocate', [Staff\JobCardController::class, 'allocate']);
+                Route::post('job-cards/{jobCard}/hand-back', [Staff\JobCardController::class, 'handBack']);
+                Route::post('job-cards/{jobCard}/attachments', [Staff\JobCardController::class, 'attach']);
             });
 
             Route::middleware('permission:'.P::METAL_RECEIVE)->group(function () {
@@ -175,15 +177,14 @@ Route::middleware('tenant')->group(function () {
                 Route::post('metal/melt', [Staff\MetalController::class, 'melt']);
                 Route::post('metal/refine', [Staff\MetalController::class, 'refine']);
                 Route::post('metal/transfer', [Staff\MetalController::class, 'transfer']);
-                Route::post('metal/closing', [Staff\MetalController::class, 'close']);
             });
 
             Route::post('metal/transactions/{transaction}/reverse', [Staff\MetalController::class, 'reverse'])
                 ->middleware('permission:'.P::METAL_REVERSE);
-            Route::post('job-cards/{jobCard}/write-off-excess', [Staff\JobCardController::class, 'writeOffExcess'])
+            Route::post('job-cards/{jobCard}/approve-loss', [Staff\JobCardController::class, 'approveLoss'])
                 ->middleware('permission:'.P::METAL_APPROVE_LOSS);
 
-            // ── Orders, production, hallmarking, dispatch (Modules 2 & 6) ─────
+            // ── Orders, production, QC, dispatch (Modules 2 & 6) ─────
             Route::middleware('permission:'.implode('|', [P::ORDERS_MANAGE, P::ORDERS_APPROVE, P::PRODUCTION_MANAGE, P::QC_MANAGE, P::DISPATCH_MANAGE, P::METAL_ISSUE, P::REPORTS_VIEW]))->group(function () {
                 Route::get('orders', [Staff\OrderController::class, 'index']);
                 Route::get('finished-items/{item}/history', [Staff\FinishedGoodsController::class, 'history']);
@@ -194,10 +195,6 @@ Route::middleware('tenant')->group(function () {
                 Route::get('work-orders/board', [Staff\WorkOrderController::class, 'board']);
                 Route::get('work-orders/{workOrder}', [Staff\WorkOrderController::class, 'show']);
                 Route::get('finished-items', [Staff\FinishedGoodsController::class, 'items']);
-                Route::get('ahcs', [Staff\FinishedGoodsController::class, 'ahcs']);
-                Route::get('hallmark-lots', [Staff\FinishedGoodsController::class, 'lots']);
-                Route::get('hallmark-lots/{lot}', [Staff\FinishedGoodsController::class, 'lot']);
-                Route::get('hallmark-lots/{lot}/sheet', [Staff\FinishedGoodsController::class, 'lotSheet']);
                 Route::get('dispatches', [Staff\FinishedGoodsController::class, 'dispatches']);
                 Route::get('dispatches/{dispatch}/challan', [Staff\FinishedGoodsController::class, 'challan']);
             });
@@ -244,12 +241,6 @@ Route::middleware('tenant')->group(function () {
                 Route::post('work-orders/{workOrder}/finish', [Staff\WorkOrderController::class, 'finish']);
                 Route::post('work-orders/{workOrder}/complete', [Staff\WorkOrderController::class, 'complete']);
                 Route::post('work-orders/{workOrder}/cancel', [Staff\WorkOrderController::class, 'cancel']);
-                Route::post('ahcs', [Staff\FinishedGoodsController::class, 'saveAhc']);
-                Route::patch('ahcs/{ahc}', [Staff\FinishedGoodsController::class, 'saveAhc']);
-                Route::post('hallmark-lots', [Staff\FinishedGoodsController::class, 'createLot']);
-                Route::post('hallmark-lots/{lot}/send', [Staff\FinishedGoodsController::class, 'sendLot']);
-                Route::post('hallmark-lots/{lot}/return', [Staff\FinishedGoodsController::class, 'returnLot']);
-                Route::post('hallmark-lots/{lot}/huids/import', [Staff\FinishedGoodsController::class, 'importHuids']);
             });
 
             // Issuing gold for a stage moves gold: needs the metal issue right.
@@ -264,12 +255,11 @@ Route::middleware('tenant')->group(function () {
                 Route::get('vouchers', [Staff\AccountingController::class, 'index']);
                 Route::get('vouchers/{voucher}', [Staff\AccountingController::class, 'show']);
                 Route::get('invoices/{voucher}/pdf', [Staff\AccountingController::class, 'invoicePdf']);
-                Route::get('invoices/{voucher}/einvoice.json', [Staff\AccountingController::class, 'einvoiceJson']);
                 Route::get('tax-settings', [Staff\AccountingController::class, 'taxSettings']);
                 Route::get('labour-rates', [Staff\AccountingController::class, 'labourRates']);
                 Route::get('financial-years', [Staff\AccountingController::class, 'financialYears']);
                 Route::get('accounting-reports/{name}', [Staff\AccountingController::class, 'report'])
-                    ->whereIn('name', ['trial-balance', 'pnl', 'balance-sheet', 'outstanding', 'cash-book', 'gstr1', 'gstr3b', 'stock-valuation', 'daybook', 'tally']);
+                    ->whereIn('name', ['trial-balance', 'pnl', 'balance-sheet', 'outstanding', 'cash-book', 'gstr1', 'gstr3b', 'stock-valuation', 'daybook']);
             });
 
             Route::middleware('permission:'.P::ACCOUNTS_MANAGE)->group(function () {
@@ -287,7 +277,6 @@ Route::middleware('tenant')->group(function () {
                 Route::post('rate-cuts', [Staff\AccountingController::class, 'rateCut']);
                 Route::get('dispatches/{dispatch}/invoice-preview', [Staff\AccountingController::class, 'invoicePreview']);
                 Route::post('invoices/from-dispatch/{dispatch}', [Staff\AccountingController::class, 'invoiceFromDispatch']);
-                Route::post('invoices/{voucher}/einvoice', [Staff\AccountingController::class, 'einvoice']);
                 Route::post('tax-settings', [Staff\AccountingController::class, 'saveTaxSetting']);
                 Route::post('labour-rates', [Staff\AccountingController::class, 'saveLabourRate']);
                 Route::delete('labour-rates/{labourRate}', [Staff\AccountingController::class, 'deleteLabourRate']);
@@ -357,7 +346,9 @@ Route::middleware('tenant')->group(function () {
             Route::get('jobs', [KaarigarApp::class, 'jobs']);
             Route::post('jobs/{jobCard}/status', [KaarigarApp::class, 'setJobStatus']);
             Route::post('jobs/{jobCard}/return', [KaarigarApp::class, 'requestReturn']);
-            Route::post('advances', [KaarigarApp::class, 'requestAdvance']);
+            Route::post('jobs/{jobCard}/handoff', [KaarigarApp::class, 'handoff']);
+            Route::post('jobs/{jobCard}/hand-back', [KaarigarApp::class, 'handBack']);
+            Route::get('team', [KaarigarApp::class, 'team']);
             Route::get('requests', [KaarigarApp::class, 'requests']);
             Route::get('khata', [KaarigarApp::class, 'khata']);
             Route::get('earnings', [KaarigarApp::class, 'earnings']);

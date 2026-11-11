@@ -31,7 +31,8 @@ class PushTest extends TestCase
         ])->assertCreated();
         $this->assertDatabaseHas('push_subscriptions', ['user_type' => 'kaarigar', 'user_id' => $app->id]);
 
-        $sent = new class implements PushSender {
+        $sent = new class implements PushSender
+        {
             public array $calls = [];
 
             public function send(array $subscriptions, array $payload): array

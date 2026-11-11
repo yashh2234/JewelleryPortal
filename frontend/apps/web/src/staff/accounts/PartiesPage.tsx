@@ -24,10 +24,10 @@ export function PartiesPage() {
       <PageTitle title="Parties">
         <Select className="w-40" value={type} onChange={(e) => setType(e.target.value)}>
           <option value="">All</option>
-          {['retailer', 'supplier', 'kaarigar', 'refiner', 'ahc', 'other'].map((t) => <option key={t} value={t} className="capitalize">{t}</option>)}
+          {['retailer', 'supplier', 'kaarigar', 'refiner', 'other'].map((t) => <option key={t} value={t} className="capitalize">{t}</option>)}
         </Select>
       </PageTitle>
-      <p className="mb-4 text-sm text-muted-foreground">Retailers, kaarigars and hallmarking centres appear here automatically. Dr = they owe you; Cr = you owe them.</p>
+      <p className="mb-4 text-sm text-muted-foreground">Retailers and kaarigars appear here automatically. Dr = they owe you; Cr = you owe them.</p>
       <Card className="mb-4">
         <Table head={['Party', 'Type', 'GSTIN', 'Money', 'Metal (fine)', '']}>
           {parties.data?.map((p) => (

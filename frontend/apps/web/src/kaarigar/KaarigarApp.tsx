@@ -8,7 +8,7 @@ import Home from './Home'
 import { I18nProvider, LangToggle, useI18n, type Key } from './i18n'
 import { OfflineBar } from './bars'
 import { flush } from './offline'
-import { EarningsScreen, IssuesScreen, JobsScreen, KhataScreen, RequestsScreen, ReturnScreen } from './screens'
+import { EarningsScreen, HandBackScreen, HandoffScreen, IssuesScreen, JobsScreen, KhataScreen, RequestsScreen, ReturnScreen, TeamScreen, UpdateScreen } from './screens'
 
 /** Kaarigar app, mounted at /kaarigar/*. Hindi / English, big touch targets, works offline for reading. */
 export default function KaarigarApp() {
@@ -23,6 +23,10 @@ export default function KaarigarApp() {
         <Route path="issues" element={<Screen title="newIssues"><IssuesScreen /></Screen>} />
         <Route path="jobs" element={<Screen title="myJobs"><JobsScreen /></Screen>} />
         <Route path="jobs/:id/return" element={<Screen title="returnWork" back="/kaarigar/jobs"><ReturnScreen /></Screen>} />
+        <Route path="jobs/:id/update" element={<Screen title="update" back="/kaarigar/jobs"><UpdateScreen /></Screen>} />
+        <Route path="jobs/:id/handoff" element={<Screen title="giveToTeam" back="/kaarigar/jobs"><HandoffScreen /></Screen>} />
+        <Route path="jobs/:id/hand-back" element={<Screen title="giveBack" back="/kaarigar/jobs"><HandBackScreen /></Screen>} />
+        <Route path="team" element={<Screen title="team"><TeamScreen /></Screen>} />
         <Route path="khata" element={<Screen title="khata"><KhataScreen /></Screen>} />
         <Route path="earnings" element={<Screen title="earnings"><EarningsScreen /></Screen>} />
         <Route path="requests" element={<Screen title="requests"><RequestsScreen /></Screen>} />

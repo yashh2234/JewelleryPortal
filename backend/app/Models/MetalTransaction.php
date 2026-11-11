@@ -17,32 +17,44 @@ class MetalTransaction extends Model
     use BelongsToTenant;
 
     public const OPENING = 'opening';
+
     public const PURCHASE = 'purchase';
+
     public const DEPOSIT = 'deposit';
+
     public const ISSUE = 'issue';
+
     public const RECEIVE = 'receive';
+
     public const MELT = 'melt';
+
     public const REFINE = 'refine';
+
     public const TRANSFER = 'transfer';
+
     public const LOSS_WRITEOFF = 'loss_writeoff';
+
     public const REVERSAL = 'reversal';
+
     public const FINISH = 'finish';
-    public const HALLMARK_SEND = 'hallmark_send';
-    public const HALLMARK_RETURN = 'hallmark_return';
+
     public const DISPATCH = 'dispatch';
+
+    /** Custody passed from one kaarigar to another; not a new issue from the factory. */
+    public const HANDOFF = 'handoff';
 
     /** Voucher series per type. */
     public const SERIES = [
         self::OPENING => 'OPN', self::PURCHASE => 'PUR', self::DEPOSIT => 'DEP', self::ISSUE => 'ISS',
         self::RECEIVE => 'RCV', self::MELT => 'MLT', self::REFINE => 'RFN', self::TRANSFER => 'TRF',
         self::LOSS_WRITEOFF => 'LOS', self::REVERSAL => 'REV', self::FINISH => 'FIN',
-        self::HALLMARK_SEND => 'HMS', self::HALLMARK_RETURN => 'HMR', self::DISPATCH => 'DSP',
+        self::DISPATCH => 'DSP', self::HANDOFF => 'HND',
     ];
 
     private const MUTABLE = ['reversed_by_id', 'kaarigar_ack', 'kaarigar_ack_at', 'updated_at'];
 
     protected $fillable = [
-        'voucher_no', 'type', 'date', 'job_card_id', 'work_order_id', 'kaarigar_id', 'process_id', 'retailer_id',
+        'voucher_no', 'type', 'date', 'job_card_id', 'from_job_card_id', 'posted_by_kaarigar_user_id', 'work_order_id', 'kaarigar_id', 'process_id', 'retailer_id',
         'party_name', 'reference', 'remarks', 'over_limit', 'reverses_id',
     ];
 
@@ -71,6 +83,23 @@ class MetalTransaction extends Model
     public function jobCard(): BelongsTo
     {
         return $this->belongsTo(JobCard::class);
+    }
+
+    /** Handoffs: the card the gold left. */
+    public function fromJobCard(): BelongsTo
+    {
+        return $this->belongsTo(JobCard::class, 'from_job_card_id');
+    }
+
+    public function postedByKaarigarUser(): BelongsTo
+    {
+        return $this->belongsTo(KaarigarUser::class, 'posted_by_kaarigar_user_id');
+    }
+
+    /** Gold the receiving kaarigar must accept or dispute. */
+    public function needsAck(): bool
+    {
+        return in_array($this->type, [self::ISSUE, self::HANDOFF], true);
     }
 
     public function workOrder(): BelongsTo

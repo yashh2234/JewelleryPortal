@@ -7,15 +7,16 @@ use App\Models\Dispatch;
 use App\Models\FinishedItem;
 use App\Models\InvoiceLine;
 use App\Models\JobCard;
+use App\Models\Kaarigar;
 use App\Models\Karat;
 use App\Models\MetalLocation;
 use App\Models\MetalTransaction;
 use App\Models\MetalTransactionLine;
 use App\Models\Order;
-use App\Models\Party;
 use App\Models\Retailer;
 use App\Models\Voucher;
 use App\Models\WorkOrder;
+use App\Models\WoStep;
 use App\Services\Accounting\Reports as AccountingReports;
 use App\Services\Metal\Ledger;
 use App\Support\Metal\Weight;
@@ -50,7 +51,7 @@ class Analytics
 
         $receivedMonth = MetalTransactionLine::whereHas('transaction', fn ($q) => $q->where('type', MetalTransaction::RECEIVE)->whereNull('reversed_by_id')->where('date', '>=', $monthStart))->sum('fine_wt');
 
-        $finished = FinishedItem::whereIn('status', [FinishedItem::IN_STOCK, FinishedItem::AT_AHC]);
+        $finished = FinishedItem::whereIn('status', [FinishedItem::IN_STOCK]);
 
         return [
             'orders' => [
@@ -75,7 +76,7 @@ class Analytics
                 'finished' => $g(MetalLocation::FINISHED),
                 'scrap' => $g(MetalLocation::SCRAP),
                 'wastage_to_date' => $g(MetalLocation::LOSS),
-                'pending_reconciliation' => Weight::fromDb((string) JobCard::where('status', JobCard::CLOSED)->where('excess_loss_fine', '>', 0)->whereNull('excess_resolution')->sum('excess_loss_fine')),
+                'pending_reconciliation' => Weight::fromDb((string) JobCard::where('loss_status', JobCard::LOSS_PENDING)->sum('loss_fine')),
             ],
             'finished' => ['pieces' => (clone $finished)->count(), 'ready' => (clone $finished)->where('qc_status', 'passed')->count(), 'qc_pending' => (clone $finished)->where('qc_status', 'pending')->count()],
             'money' => [
@@ -208,7 +209,9 @@ class Analytics
                 'cards' => (string) $g->count(),
                 'pieces' => (string) $g->sum('pieces'),
                 'issued_fine' => $issued,
+                'handed_in_fine' => Weight::add('0', ...$g->pluck('handed_in_fine')->map(fn ($v) => (string) $v)->all()),
                 'returned_fine' => Weight::add('0', ...$g->map(fn ($c) => Weight::add((string) $c->returned_fine, (string) $c->scrap_fine))->all()),
+                'handed_out_fine' => Weight::add('0', ...$g->pluck('handed_out_fine')->map(fn ($v) => (string) $v)->all()),
                 'loss_fine' => $loss,
                 'wastage_pct' => Weight::isPositive($issued) ? number_format((float) $loss * 100 / (float) $issued, 3) : '0.000',
                 'excess_fine' => Weight::add('0', ...$g->pluck('excess_loss_fine')->map(fn ($v) => (string) $v)->all()),
@@ -288,7 +291,7 @@ class Analytics
 
     private function goldWithKaarigars(string $from, string $to): array
     {
-        $rows = \App\Models\Kaarigar::orderBy('name')->get()->map(function ($k) use ($to) {
+        $rows = Kaarigar::orderBy('name')->get()->map(function ($k) use ($to) {
             $bal = $this->ledger->balance($this->ledger->kaarigar($k), null, $to);
             $open = JobCard::where('kaarigar_id', $k->id)->where('status', JobCard::OPEN)->count();
 
@@ -301,21 +304,31 @@ class Analytics
             'rows' => $rows, 'totals' => ['kaarigar' => 'Total', 'fine' => Weight::add('0', ...$rows->pluck('fine')->all())]];
     }
 
+    /**
+     * Blueprint §3 reconciliation: per closed job card, gold in (issued + handed in)
+     * against gold out (returned + scrap & dust + handed on), the difference, how
+     * much of it the process allows, and whether it has been approved.
+     */
     private function goldReconciliation(string $from, string $to): array
     {
-        $rows = JobCard::with(['kaarigar:id,name', 'process:id,name', 'woStep.workOrder:id,wo_no'])->where('status', JobCard::CLOSED)
-            ->whereBetween('closed_at', [$from.' 00:00:00', $to.' 23:59:59'])->where('excess_loss_fine', '>', 0)->orderByDesc('excess_loss_fine')->get()
+        $rows = JobCard::with(['kaarigar:id,name', 'process:id,name', 'woStep.workOrder:id,wo_no', 'lossApprover:id,name'])->where('status', JobCard::CLOSED)
+            ->whereBetween('closed_at', [$from.' 00:00:00', $to.' 23:59:59'])->where('loss_fine', '>', 0)
+            ->orderByRaw("case when loss_status = 'pending' then 0 else 1 end")->orderByDesc('loss_fine')->get()
             ->map(fn ($c) => [
                 'card' => $c->card_no, 'wo' => $c->woStep?->workOrder?->wo_no ?? '', 'kaarigar' => $c->kaarigar->name, 'process' => $c->process->name,
-                'issued' => (string) $c->issued_fine, 'finished' => (string) $c->returned_fine, 'scrap' => (string) $c->scrap_fine,
-                'allowed' => (string) $c->allowed_loss_fine, 'difference' => (string) $c->excess_loss_fine,
-                'resolution' => $c->excess_resolution ? str_replace('_', ' ', $c->excess_resolution) : 'UNRESOLVED',
+                'in' => Weight::add((string) $c->issued_fine, (string) $c->handed_in_fine),
+                'out' => Weight::add((string) $c->returned_fine, (string) $c->scrap_fine, (string) $c->handed_out_fine),
+                'difference' => (string) $c->loss_fine, 'allowed' => (string) $c->allowed_loss_fine, 'excess' => (string) $c->excess_loss_fine,
+                'status' => $c->loss_status === JobCard::LOSS_PENDING ? 'PENDING APPROVAL'
+                    : trim((JobCard::LOSS_REASONS[$c->loss_reason_code] ?? 'approved').($c->excess_resolution === 'recovered' ? ' · excess recovered' : '')),
+                'approved_by' => $c->lossApprover?->name ?? '',
             ]);
 
         return ['columns' => [
-            ['key' => 'card', 'label' => 'Job card'], ['key' => 'wo', 'label' => 'WO'], ['key' => 'kaarigar', 'label' => 'Kaarigar'], ['key' => 'process', 'label' => 'Process'],
-            ['key' => 'issued', 'label' => 'Issued fine', 'num' => true], ['key' => 'finished', 'label' => 'Work back', 'num' => true], ['key' => 'scrap', 'label' => 'Scrap back', 'num' => true],
-            ['key' => 'allowed', 'label' => 'Allowed loss', 'num' => true], ['key' => 'difference', 'label' => 'Unreconciled', 'num' => true], ['key' => 'resolution', 'label' => 'Status'],
+            ['key' => 'card', 'label' => 'Job card'], ['key' => 'wo', 'label' => 'WO'], ['key' => 'kaarigar', 'label' => 'Kaarigar'], ['key' => 'process', 'label' => 'Stage'],
+            ['key' => 'in', 'label' => 'Gold in (fine)', 'num' => true], ['key' => 'out', 'label' => 'Gold out (fine)', 'num' => true],
+            ['key' => 'difference', 'label' => 'Difference', 'num' => true], ['key' => 'allowed', 'label' => 'Allowed', 'num' => true], ['key' => 'excess', 'label' => 'Above limit', 'num' => true],
+            ['key' => 'status', 'label' => 'Status'], ['key' => 'approved_by', 'label' => 'Approved by'],
         ], 'rows' => $rows, 'totals' => ['card' => 'Total', 'difference' => Weight::add('0', ...$rows->pluck('difference')->all())]];
     }
 
@@ -420,7 +433,7 @@ class Analytics
 
     /**
      * Estimated profit per order: taxable sales − fine gold at the 24K rate − kaarigar
-     * labour on its job cards − hallmarking charges. Metal is valued at today's
+     * labour on its job cards. Metal is valued at today's
      * purest-karat rate, so this is a management estimate, not an accounting figure.
      */
     private function orderProfitability(string $from, string $to): array
@@ -439,14 +452,13 @@ class Analytics
             $metal = Money::mul($fine, $rate);
 
             $woIds = $o->lines->flatMap->workOrders->pluck('id')->unique();
-            $cardIds = JobCard::whereIn('wo_step_id', \App\Models\WoStep::whereIn('work_order_id', $woIds)->select('id'))->pluck('id');
+            $cardIds = JobCard::whereIn('wo_step_id', WoStep::whereIn('work_order_id', $woIds)->select('id'))->pluck('id');
             $labour = Money::round((string) Voucher::where('type', Voucher::LABOUR)->where('status', 'posted')->where('source_type', 'job_card')->whereIn('source_id', $cardIds)->sum('amount'));
-            $hallmark = Money::add('0', ...$lines->pluck('hallmark_charge')->map(fn ($v) => (string) $v)->all());
-            $profit = Money::sub(Money::sub(Money::sub($revenue, $metal), $labour), $hallmark);
+            $profit = Money::sub(Money::sub($revenue, $metal), $labour);
 
             return [
                 'order' => $o->order_no, 'retailer' => $o->retailer->shop_name, 'fine' => $fine, 'revenue' => $revenue, 'metal' => $metal,
-                'labour' => $labour, 'hallmark' => $hallmark, 'profit' => $profit,
+                'labour' => $labour, 'profit' => $profit,
                 'margin' => Money::isZero($revenue) ? '' : number_format((float) $profit * 100 / (float) $revenue, 1),
             ];
         })->filter(fn ($r) => ! Money::isZero($r['revenue']))->values();
@@ -454,7 +466,7 @@ class Analytics
         return ['columns' => [
             ['key' => 'order', 'label' => 'Order'], ['key' => 'retailer', 'label' => 'Retailer'], ['key' => 'fine', 'label' => 'Fine g', 'num' => true],
             ['key' => 'revenue', 'label' => 'Taxable sales ₹', 'num' => true], ['key' => 'metal', 'label' => "Gold cost ₹ (@{$rate}/g)", 'num' => true],
-            ['key' => 'labour', 'label' => 'Labour ₹', 'num' => true], ['key' => 'hallmark', 'label' => 'Hallmark ₹', 'num' => true],
+            ['key' => 'labour', 'label' => 'Labour ₹', 'num' => true],
             ['key' => 'profit', 'label' => 'Est. profit ₹', 'num' => true], ['key' => 'margin', 'label' => 'Margin %', 'num' => true],
         ], 'rows' => $rows, 'totals' => ['order' => 'Total', 'revenue' => Money::add('0', ...$rows->pluck('revenue')->all()), 'profit' => Money::add('0', ...$rows->pluck('profit')->all())]];
     }

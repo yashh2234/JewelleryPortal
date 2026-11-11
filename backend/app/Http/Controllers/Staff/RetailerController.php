@@ -11,7 +11,6 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Validation\Rule;
 use Illuminate\Validation\Rules\Password;
 
 class RetailerController extends Controller
@@ -135,7 +134,6 @@ class RetailerController extends Controller
             'credit_limit' => ['sometimes', 'decimal:0,2', 'min:0'],
             'making_slab_id' => ['nullable', TenantRules::exists('making_slabs')],
             'metal_account_enabled' => ['sometimes', 'boolean'],
-            'hallmark_mandatory' => ['sometimes', 'boolean'],
             'salesperson_id' => ['nullable', TenantRules::exists('users')],
             'payment_terms_days' => ['nullable', 'integer', 'min:0', 'max:365'],
         ];
@@ -145,7 +143,7 @@ class RetailerController extends Controller
     {
         $fields = Arr::only($data, [
             'shop_name', 'contact_name', 'gstin', 'city', 'address', 'phone', 'email',
-            'credit_limit', 'making_slab_id', 'metal_account_enabled', 'hallmark_mandatory',
+            'credit_limit', 'making_slab_id', 'metal_account_enabled',
             'salesperson_id', 'payment_terms_days',
         ]);
 

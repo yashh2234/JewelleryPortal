@@ -11,6 +11,7 @@ use App\Models\RouteTemplate;
 use App\Models\Subscription;
 use App\Models\Tenant;
 use App\Models\User;
+use App\Services\Accounting\Books;
 use App\Support\Permissions;
 use App\Support\Tenancy\TenantContext;
 use Illuminate\Support\Facades\DB;
@@ -32,10 +33,10 @@ class TenantProvisioner
         ['18K', '75.000'], ['14K', '58.500'], ['9K', '37.500'],
     ];
 
-    /** Processes in shop order with a starting allowed wastage % (owner tunes these). */
+    /** Production stages in shop order (workflow blueprint §2) with a starting allowed wastage % (owner tunes these). */
     public const DEFAULT_PROCESSES = [
-        ['Melting', '0.200'], ['Wire / sheet', '0.300'], ['Casting', '0.500'], ['Making', '1.000'],
-        ['Stone setting', '0.300'], ['Filing', '0.800'], ['Polishing', '0.500'], ['Hallmarking', '0.050'],
+        ['Melting', '0.200'], ['Casting', '0.500'], ['Filing', '0.800'], ['Soldering', '1.000'],
+        ['Stone setting', '0.300'], ['Polishing', '0.500'], ['Finishing', '0.300'],
     ];
 
     public const DEFAULT_CATEGORIES = ['Kada', 'Chain', 'Bangle', 'Ring', 'Necklace', 'Earring', 'Pendant'];
@@ -82,8 +83,8 @@ class TenantProvisioner
             $this->context->runAs($tenant, function () use ($data) {
                 $this->createRoles();
                 $this->createMasters();
-                app(\App\Services\Accounting\Books::class)->setup();
-                app(\App\Services\Accounting\Books::class)->financialYear(today()->toDateString());
+                app(Books::class)->setup();
+                app(Books::class)->financialYear(today()->toDateString());
 
                 $owner = User::create([
                     'name' => $data['owner_name'],
@@ -127,7 +128,7 @@ class TenantProvisioner
         }
 
         $route = RouteTemplate::create(['name' => 'Standard (hand-made)', 'is_default' => true]);
-        foreach (['Melting', 'Wire / sheet', 'Making', 'Filing', 'Polishing', 'Hallmarking'] as $i => $name) {
+        foreach (['Melting', 'Casting', 'Filing', 'Soldering', 'Stone setting', 'Polishing', 'Finishing'] as $i => $name) {
             $route->steps()->create(['process_id' => $processes[$name]->id, 'sequence' => $i + 1]);
         }
 

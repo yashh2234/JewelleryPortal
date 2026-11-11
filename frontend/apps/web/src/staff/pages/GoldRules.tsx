@@ -9,7 +9,7 @@ const DEFAULTS: Rules = { disputed: true, unacknowledged: true, excess: true, li
 const RULES: { key: keyof Rules; title: string; text: string }[] = [
   { key: 'disputed', title: 'Disputed issue not resolved', text: 'The kaarigar disputed an earlier issue and it has not been corrected (reversed and re-issued).' },
   { key: 'unacknowledged', title: 'Previous issue not acknowledged in 24 h', text: 'Not accepted in the kaarigar app, and no signed slip recorded by staff.' },
-  { key: 'excess', title: 'Wastage above the limit not resolved', text: 'A closed job card lost more than the allowed wastage and nobody has written it off or recovered it.' },
+  { key: 'excess', title: 'Difference above the limit not approved', text: 'A closed job card lost more than the allowed wastage and the difference has not yet been approved with a reason.' },
   { key: 'limit', title: 'Gold limit per kaarigar', text: 'Blocks an issue that would take the kaarigar above the fine-gold limit set on their profile.' },
   { key: 'overdue', title: 'Overdue job cards', text: 'Blocks new gold while any of the kaarigar’s job cards is past its due date.' },
 ]

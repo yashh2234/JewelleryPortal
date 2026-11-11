@@ -4,10 +4,10 @@ namespace App\Services\Metal;
 
 use App\Models\Kaarigar;
 use App\Models\Karat;
-use App\Models\MetalClosing;
 use App\Models\MetalLocation;
 use App\Models\MetalTransaction;
 use App\Models\MetalTransactionLine;
+use App\Models\WorkOrder;
 use App\Support\Metal\Weight;
 use App\Support\NumberSeries;
 use Carbon\CarbonImmutable;
@@ -19,7 +19,7 @@ use Illuminate\Support\Facades\DB;
  *  - runs in one DB transaction and locks the source locations,
  *  - computes net and fine from gross / stone / findings / purity with bcmath,
  *  - refuses to take any stock location (vault, kaarigar, scrap…) below zero,
- *  - refuses dates in a closed day or in the future,
+ *  - refuses dates in the future,
  *  - gets a gap-free voucher number per type and financial year.
  */
 class Ledger
@@ -44,14 +44,9 @@ class Ledger
         return $this->location(MetalLocation::KAARIGAR, $kaarigar, $kaarigar->name);
     }
 
-    public function workOrder(\App\Models\WorkOrder $wo): MetalLocation
+    public function workOrder(WorkOrder $wo): MetalLocation
     {
         return $this->location(MetalLocation::WO, $wo, $wo->wo_no);
-    }
-
-    public function ahc(\App\Models\Ahc $ahc): MetalLocation
-    {
-        return $this->location(MetalLocation::AHC, $ahc, 'AHC · '.$ahc->name);
     }
 
     public function of(string $type): MetalLocation
@@ -70,9 +65,9 @@ class Ledger
     // ── Posting ──────────────────────────────────────────────────────────────
 
     /**
-     * @param  array<string, mixed>  $header  date, job_card_id, kaarigar_id, process_id, retailer_id, party_name, reference, remarks, over_limit, reverses_id
+     * @param  array<string, mixed>  $header  date, job_card_id, from_job_card_id, posted_by_kaarigar_user_id, kaarigar_id, process_id, retailer_id, party_name, reference, remarks, over_limit, reverses_id
      * @param  list<array{from: MetalLocation, to: MetalLocation, karat: Karat, gross?: string, stone?: string, findings?: string, purity?: string, fine?: string, pieces?: int|null, kind?: string}>  $lines
-     *         Pass `fine` instead of `gross` for loss lines (gross is then derived from the karat purity).
+     *                                                                                                                                                                                                         Pass `fine` instead of `gross` for loss lines (gross is then derived from the karat purity).
      */
     public function post(string $type, array $header, array $lines): MetalTransaction
     {
@@ -110,7 +105,7 @@ class Ledger
                 throw new LedgerException('This entry is already reversed or is itself a reversal.');
             }
 
-            if ($tx->jobCard && ! $tx->jobCard->isOpen()) {
+            if (($tx->jobCard && ! $tx->jobCard->isOpen()) || ($tx->fromJobCard && ! $tx->fromJobCard->isOpen())) {
                 throw new LedgerException('The job card for this entry is closed; it can no longer be reversed.');
             }
 
@@ -123,6 +118,8 @@ class Ledger
             $reversal = $this->post(MetalTransaction::REVERSAL, [
                 'date' => today()->toDateString(),
                 'job_card_id' => $tx->job_card_id,
+                'from_job_card_id' => $tx->from_job_card_id,
+                'work_order_id' => $tx->work_order_id,
                 'kaarigar_id' => $tx->kaarigar_id,
                 'process_id' => $tx->process_id,
                 'retailer_id' => $tx->retailer_id,
@@ -203,22 +200,12 @@ class Ledger
         return $totals;
     }
 
-    public function lastClosedDate(): ?string
-    {
-        return MetalClosing::max('date');
-    }
-
     // ── Internals ────────────────────────────────────────────────────────────
 
     private function assertDateOpen(string $date): void
     {
         if ($date > today()->toDateString()) {
             throw new LedgerException('Entries cannot be dated in the future.');
-        }
-
-        $closed = $this->lastClosedDate();
-        if ($closed !== null && $date <= $closed) {
-            throw new LedgerException("The books are closed up to {$closed}. Post this entry with a later date.");
         }
     }
 
@@ -273,7 +260,7 @@ class Ledger
 
     /**
      * Vault, scrap and finished goods are checked per karat (you can't issue 22K you
-     * don't have); kaarigars, work orders and the AHC hold mixed gold, so their total
+     * don't have); kaarigars and work orders hold mixed gold, so their total
      * fine is checked.
      */
     private function assertStockStaysPositive(array $rows): void

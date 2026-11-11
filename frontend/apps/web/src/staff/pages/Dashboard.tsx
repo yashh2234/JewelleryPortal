@@ -7,7 +7,6 @@ import type { ReactNode } from 'react'
 import { Link, useNavigate } from 'react-router'
 import { useCan, useMe } from '../auth'
 import { PageTitle } from '../layout'
-import { SHOW_EXTRAS } from '../../workflow'
 import type { Summary } from '../metal/types'
 import { ORDER_STATUS, type OrderStatus } from '../production/types'
 import type { GoldRate, Retailer } from '../types'
@@ -27,7 +26,7 @@ interface Dash {
 
 const monthLabel = (m: string) => new Date(m + '-01T00:00:00').toLocaleDateString('en-IN', { month: 'short' })
 const lakh = (v: number) => (v >= 1e7 ? `₹${(v / 1e7).toFixed(1)}Cr` : v >= 1e5 ? `₹${(v / 1e5).toFixed(1)}L` : `₹${Math.round(v).toLocaleString('en-IN')}`)
-const LOCATION: Record<string, string> = { vault: 'Vault', kaarigar: 'With kaarigars', wo: 'In work orders', scrap: 'Scrap', finished: 'Finished goods', ahc: 'At hallmarking' }
+const LOCATION: Record<string, string> = { vault: 'Vault', kaarigar: 'With kaarigars', wo: 'In work orders', scrap: 'Scrap', finished: 'Finished goods' }
 
 function greeting() {
   const h = new Date().getHours()
@@ -137,11 +136,11 @@ export default function Dashboard() {
             {d?.orders && <Alarm n={d.orders.overdue} label="Orders past due date" to="/staff/orders?overdue=1" />}
             {d?.gold && Number(d.gold.pending_reconciliation) > 0 && <Alarm n={grams(d.gold.pending_reconciliation)} label="Gold pending reconciliation" to="/staff/reports/gold-reconciliation" />}
             {s && <>
-              <Alarm n={s.wastage_alerts} label="Wastage above limit" to="/staff/metal/job-cards?f=alerts" />
+              <Alarm n={s.wastage_alerts} label="Gold differences to approve" to="/staff/metal/job-cards?f=alerts" />
               <Alarm n={s.overdue_job_cards} label="Overdue job cards" to="/staff/metal/job-cards" />
-              {SHOW_EXTRAS && <Alarm n={s.pending_requests} label="Kaarigar requests" to="/staff/metal/requests" />}
-              <Alarm n={s.disputed_issues} label="Disputed gold issues" to="/staff/metal/transactions" />
-              <Alarm n={s.unconfirmed_issues} label="Gold issues not acknowledged in 24 h" to="/staff/metal/transactions" />
+              <Alarm n={s.pending_requests} label="Kaarigar requests" to="/staff/metal/requests" />
+              <Alarm n={s.disputed_issues} label="Disputed issues / handoffs" to="/staff/metal/transactions" />
+              <Alarm n={s.unconfirmed_issues} label="Issues / handoffs not acknowledged in 24 h" to="/staff/metal/transactions" />
             </>}
             {pendingRetailers.data && <Alarm n={pendingRetailers.data.total} label="Retailers to approve" to="/staff/retailers" />}
           </div>

@@ -5,7 +5,6 @@ namespace Tests\Feature;
 use App\Models\JobCard;
 use App\Models\Kaarigar;
 use App\Models\Karat;
-use App\Models\MetalClosing;
 use App\Models\MetalLocation;
 use App\Models\MetalTransaction;
 use App\Models\Process;
@@ -14,6 +13,8 @@ use App\Models\Tenant;
 use App\Services\Metal\Ledger;
 use App\Services\Metal\LedgerException;
 use App\Services\Metal\MetalOperations;
+use App\Support\FinancialYear;
+use App\Support\Metal\Weight;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use LogicException;
 use Tests\TestCase;
@@ -52,7 +53,7 @@ class GoldLedgerTest extends TestCase
         return Process::where('name', $name)->firstOrFail();
     }
 
-    private function card(Kaarigar $k, string $process = 'Making', string $karat = '22K'): JobCard
+    private function card(Kaarigar $k, string $process = 'Soldering', string $karat = '22K'): JobCard
     {
         return $this->ops->openJobCard(['kaarigar_id' => $k->id, 'process_id' => $this->process($process)->id, 'karat_id' => $this->karat($karat)->id]);
     }
@@ -73,7 +74,7 @@ class GoldLedgerTest extends TestCase
         $this->t(function () {
             $tx = $this->ops->purchase([['karat_id' => $this->karat('22K')->id, 'gross' => '100.000']], ['reference' => 'Tunch 42']);
 
-            $this->assertSame('PUR/'.\App\Support\FinancialYear::label().'/0001', $tx->voucher_no);
+            $this->assertSame('PUR/'.FinancialYear::label().'/0001', $tx->voucher_no);
             $this->assertSame('91.600', $tx->lines[0]->fine_wt);
             $this->assertSame('91.600', $this->fine($this->ledger->vault()));
             // Double entry: the outside world went negative by the same amount.
@@ -81,7 +82,7 @@ class GoldLedgerTest extends TestCase
         });
     }
 
-    public function test_reel_example_wastage_within_and_above_limit(): void
+    public function test_reel_example_difference_waits_for_approval(): void
     {
         $this->t(function () {
             $this->stockVault();
@@ -96,21 +97,23 @@ class GoldLedgerTest extends TestCase
             $this->ops->receive($r, ['gross' => '98.4', 'purity' => '100'], null, 'finished', []);
             $r = $this->ops->closeJobCard($r);
 
-            // Making allows 1.000 %: 1.000 g written off, 0.600 g stays on Ramesh and is flagged.
+            // Soldering allows 1.000 %. Nothing is written off on its own: all 1.600 g stays on Ramesh.
             $this->assertSame('1.600', $r->loss_fine);
             $this->assertSame('1.000', $r->allowed_loss_fine);
             $this->assertSame('0.600', $r->excess_loss_fine);
-            $this->assertSame('0.600', $this->fine($this->ledger->kaarigar($ramesh)));
-            $this->assertTrue(MetalTransaction::where('type', 'loss_writeoff')->where('job_card_id', $r->id)->value('over_limit'));
+            $this->assertSame('pending', $r->loss_status);
+            $this->assertSame('1.600', $this->fine($this->ledger->kaarigar($ramesh)));
+            $this->assertFalse(MetalTransaction::where('type', 'loss_writeoff')->where('job_card_id', $r->id)->exists());
 
-            // Imran: issued 80 g, returns 79.1 g + 0.3 g scrap → 0.6 g loss = 0.75 %, all within limit.
+            // Imran: issued 80 g, returns 79.1 g + 0.3 g scrap → 0.6 g difference = 0.75 %, within the limit but still pending.
             $i = $this->card($imran);
             $this->ops->issue($i, [['karat_id' => $k22, 'gross' => '80', 'purity' => '100']], 'vault', []);
             $this->ops->receive($i, ['gross' => '79.1', 'purity' => '100'], ['gross' => '0.3', 'purity' => '100'], 'finished', []);
             $i = $this->ops->closeJobCard($i);
             $this->assertSame('0.600', $i->loss_fine);
             $this->assertSame('0.000', $i->excess_loss_fine);
-            $this->assertSame('0.000', $this->fine($this->ledger->kaarigar($imran)));
+            $this->assertSame('pending', $i->loss_status);
+            $this->assertSame('0.600', $this->fine($this->ledger->kaarigar($imran)));
             $this->assertSame('0.300', $this->fine($this->ledger->of(MetalLocation::SCRAP)));
 
             // Suresh still holds 60 g on the bench.
@@ -118,17 +121,143 @@ class GoldLedgerTest extends TestCase
             $this->ops->issue($s, [['karat_id' => $k22, 'gross' => '60', 'purity' => '100']], 'vault', []);
             $this->assertSame('60.000', $this->fine($this->ledger->kaarigar($suresh)));
 
-            // Owner approves Ramesh's excess.
-            $this->ops->writeOffExcess($r, 'Fine filing design');
+            // Approval needs a reason code and a note.
+            try {
+                $this->ops->approveLoss($r, 'process_loss', ' ');
+                $this->fail('A note is required');
+            } catch (LedgerException) {
+            }
+
+            $this->ops->approveLoss($r, 'polishing_loss', 'Fine filing design, checked the bench');
             $this->assertSame('0.000', $this->fine($this->ledger->kaarigar($ramesh)));
             $this->assertSame('written_off', $r->fresh()->excess_resolution);
+            $this->assertSame('approved', $r->fresh()->loss_status);
+            $this->assertTrue(MetalTransaction::where('type', 'loss_writeoff')->where('job_card_id', $r->id)->value('over_limit'));
 
-            // The books always balance: sum over every location is zero.
+            $this->ops->approveLoss($i, 'process_loss', 'Normal');
+            $this->assertSame('0.000', $this->fine($this->ledger->kaarigar($imran)));
+
+            // Nothing left to approve.
+            $this->expectException(LedgerException::class);
+            $this->ops->approveLoss($i->fresh(), 'process_loss', 'again');
+        });
+    }
+
+    public function test_balances_always_sum_to_zero(): void
+    {
+        $this->t(function () {
+            $this->stockVault();
+            $card = $this->card(Kaarigar::create(['name' => 'A']));
+            $this->ops->issue($card, [['karat_id' => $this->karat('22K')->id, 'gross' => '50']], 'vault', []);
+
             $total = '0.000';
             foreach ($this->ledger->balanceRows() as $row) {
-                $total = \App\Support\Metal\Weight::add($total, $row['fine']);
+                $total = Weight::add($total, $row['fine']);
             }
             $this->assertSame('0.000', $total);
+        });
+    }
+
+    /** Blueprint §2: 100 g to the head, 60 g to the casting kaarigar is a transfer, not a second issue. */
+    public function test_head_kaarigar_handoff_moves_custody_not_a_new_issue(): void
+    {
+        $this->t(function () {
+            $this->stockVault();                                     // 916.000 fine
+            $head = Kaarigar::create(['name' => 'Head']);
+            $caster = Kaarigar::create(['name' => 'Caster', 'head_kaarigar_id' => $head->id]);
+            $k22 = $this->karat('22K')->id;
+
+            $h = $this->card($head);
+            $this->ops->issue($h, [['karat_id' => $k22, 'gross' => '100', 'purity' => '100']], 'vault', []);
+
+            $tx = $this->ops->allocate($h, $caster, ['process_id' => $this->process('Casting')->id], [['gross' => '60', 'purity' => '100']], []);
+            $child = $tx->jobCard;
+
+            $this->assertSame('handoff', $tx->type);
+            $this->assertSame($h->id, $tx->from_job_card_id);
+            $this->assertSame($h->id, $child->parent_job_card_id);
+            $this->assertSame($caster->id, $tx->kaarigar_id);        // the receiver acknowledges
+            $this->assertSame('40.000', $this->fine($this->ledger->kaarigar($head)));
+            $this->assertSame('60.000', $this->fine($this->ledger->kaarigar($caster)));
+            $this->assertSame('816.000', $this->fine($this->ledger->vault()));   // only the one issue left the vault
+            $this->assertSame(1, MetalTransaction::where('type', 'issue')->count());
+
+            // Can't hand on more than he holds on the card.
+            try {
+                $this->ops->allocate($h, $caster, [], [['gross' => '41', 'purity' => '100']], []);
+                $this->fail('Only 40 g is left on the head card');
+            } catch (LedgerException) {
+            }
+
+            // Caster hands 59.5 g back to the head and 0.3 g of dust to the store, then closes.
+            $this->ops->handoff($child, $h, [['gross' => '59.5', 'purity' => '100']], []);
+            $this->ops->receiveParts($child, ['dust' => ['gross' => '0.3', 'purity' => '100']], 'vault', []);
+            $child = $this->ops->closeJobCard($child);
+            $this->assertSame('60.000', $child->handed_in_fine);
+            $this->assertSame('59.500', $child->handed_out_fine);
+            $this->assertSame('0.300', $child->scrap_fine);
+            $this->assertSame('0.200', $child->loss_fine);
+
+            // Head returns the finished work: in = 100 issued + 59.5 back, out = 60 handed + 99 returned.
+            $this->ops->receive($h, ['gross' => '99', 'purity' => '100'], null, 'finished', []);
+            $h = $this->ops->closeJobCard($h);
+            $this->assertSame('100.000', $h->issued_fine);
+            $this->assertSame('59.500', $h->handed_in_fine);
+            $this->assertSame('60.000', $h->handed_out_fine);
+            $this->assertSame('0.500', $h->loss_fine);
+            $this->assertSame('0.500', $this->fine($this->ledger->kaarigar($head)));
+            $this->assertSame('0.200', $this->fine($this->ledger->kaarigar($caster)));
+        });
+    }
+
+    public function test_handoff_reversal_restores_custody(): void
+    {
+        $this->t(function () {
+            $this->stockVault();
+            $head = Kaarigar::create(['name' => 'Head']);
+            $sub = Kaarigar::create(['name' => 'Sub', 'head_kaarigar_id' => $head->id]);
+            $h = $this->card($head);
+            $this->ops->issue($h, [['karat_id' => $this->karat('22K')->id, 'gross' => '50', 'purity' => '100']], 'vault', []);
+            $tx = $this->ops->allocate($h, $sub, [], [['gross' => '20', 'purity' => '100']], []);
+
+            $this->ledger->reverse($tx, 'Wrong kaarigar');
+
+            $this->assertSame('50.000', $this->fine($this->ledger->kaarigar($head)));
+            $this->assertSame('0.000', $this->fine($this->ledger->kaarigar($sub)));
+            $f = $this->ops->cardFigures($h->fresh());
+            $this->assertSame('0.000', $f['handed_out']);
+            $this->assertSame('50.000', $this->ops->outstanding($f));
+        });
+    }
+
+    /** Blueprint §3 return vouchers: each kind lands in its own place. */
+    public function test_return_kinds_go_to_their_own_places(): void
+    {
+        $this->t(function () {
+            $this->stockVault();
+            $card = $this->card(Kaarigar::create(['name' => 'A']));
+            $this->ops->issue($card, [['karat_id' => $this->karat('22K')->id, 'gross' => '100', 'purity' => '100']], 'vault', []);
+            $vaultBefore = $this->fine($this->ledger->vault());
+
+            $tx = $this->ops->receiveParts($card, [
+                'work' => ['gross' => '90', 'purity' => '100', 'pieces' => 9],
+                'raw' => ['gross' => '2', 'purity' => '100'],
+                'rejected' => ['gross' => '4', 'purity' => '100', 'pieces' => 1],
+                'scrap' => ['gross' => '1.5', 'purity' => '100'],
+                'dust' => ['gross' => '1', 'purity' => '100'],
+            ], 'finished', []);
+
+            $this->assertEqualsCanonicalizing(['work', 'raw', 'rejected', 'scrap', 'dust'], $tx->lines->pluck('kind')->all());
+            $this->assertSame('90.000', $this->fine($this->ledger->of(MetalLocation::FINISHED)));
+            // Raw and rejected (no work order here) go back to the vault.
+            $this->assertSame(Weight::add($vaultBefore, '6'), $this->fine($this->ledger->vault()));
+            $this->assertSame('2.500', $this->fine($this->ledger->of(MetalLocation::SCRAP)));
+
+            $f = $this->ops->cardFigures($card);
+            $this->assertSame('96.000', $f['returned']);
+            $this->assertSame('2.500', $f['scrap']);
+            $this->assertSame('1.000', $f['by_kind']['dust']);
+            $this->assertSame('1.500', $this->ops->outstanding($f));
         });
     }
 
@@ -275,17 +404,6 @@ class GoldLedgerTest extends TestCase
             // Gold sits in the vault; the retailer is owed it back (tracked on the party).
             $this->assertSame('9.990', $this->fine($this->ledger->vault()));
             $this->assertSame($retailer->id, $tx->retailer_id);
-        });
-    }
-
-    public function test_closed_day_is_locked(): void
-    {
-        $this->t(function () {
-            MetalClosing::create(['date' => today()->toDateString(), 'system_vault_fine' => '0']);
-
-            $this->expectException(LedgerException::class);
-            $this->expectExceptionMessage('The books are closed');
-            $this->stockVault();
         });
     }
 

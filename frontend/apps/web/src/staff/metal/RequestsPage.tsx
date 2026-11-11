@@ -6,12 +6,12 @@ import { fmtDate } from './shared'
 
 interface KRequest {
   id: number
-  type: 'return' | 'dispute' | 'advance'
+  type: 'return' | 'dispute'
   status: string
-  data: { work_gross?: string; stone?: string; scrap_gross?: string; pieces?: number; note?: string; reason?: string; weight_received?: string; amount?: string }
+  data: { work_gross?: string; stone?: string; scrap_gross?: string; raw_gross?: string; dust_gross?: string; rejected_gross?: string; rejected_pieces?: number; pieces?: number; note?: string; reason?: string; weight_received?: string }
   created_at: string
   kaarigar: { id: number; name: string }
-  job_card: { id: number; card_no: string; karat: { label: string; purity_pct: string }; process: { name: string } } | null
+  job_card: { id: number; card_no: string; wo_step_id?: number | null; karat: { label: string; purity_pct: string }; process: { name: string } } | null
   transaction: { id: number; voucher_no: string } | null
   attachments: { id: number; kind: string; url: string; thumb_url: string | null }[]
   review_note: string | null
@@ -34,7 +34,7 @@ export default function RequestsPage() {
           <option value="rejected">Rejected</option>
         </Select>
       </PageTitle>
-      {list.data?.data.length === 0 && <Card><EmptyState title="Nothing waiting">Returns, disputes and advance requests from the kaarigar app appear here.</EmptyState></Card>}
+      {list.data?.data.length === 0 && <Card><EmptyState title="Nothing waiting">Returns and disputes from the kaarigar app appear here.</EmptyState></Card>}
       <div className="grid gap-3">
         {list.data?.data.map((r) => <RequestCard key={r.id} r={r} />)}
       </div>
@@ -44,8 +44,11 @@ export default function RequestsPage() {
 
 function RequestCard({ r }: { r: KRequest }) {
   const qc = useQueryClient()
-  const [w, setW] = useState({ work_gross: r.data.work_gross ?? '', stone: r.data.stone ?? '', scrap_gross: r.data.scrap_gross ?? '', purity: '' })
-  const [destination, setDestination] = useState('finished')
+  const [w, setW] = useState({
+    work_gross: r.data.work_gross ?? '', stone: r.data.stone ?? '', scrap_gross: r.data.scrap_gross ?? '',
+    raw_gross: r.data.raw_gross ?? '', dust_gross: r.data.dust_gross ?? '', rejected_gross: r.data.rejected_gross ?? '', purity: '',
+  })
+  const [destination, setDestination] = useState('')
   const [close, setClose] = useState(true)
   const [note, setNote] = useState('')
 
@@ -56,7 +59,7 @@ function RequestCard({ r }: { r: KRequest }) {
   }
   const approve = useMutation({
     mutationFn: () => api.post(`/api/v1/kaarigar-requests/${r.id}/approve`, r.type === 'return'
-      ? { ...w, purity: w.purity || null, destination, close, note: note || null }
+      ? { ...w, rejected_pieces: r.data.rejected_pieces ?? null, purity: w.purity || null, destination: destination || null, close, note: note || null }
       : { note: note || null }),
     onSuccess: done,
   })
@@ -78,9 +81,16 @@ function RequestCard({ r }: { r: KRequest }) {
       </div>
 
       <div className="mt-2 text-sm">
-        {r.type === 'return' && <>Kaarigar says: work <b>{r.data.work_gross ?? '—'} g</b>{r.data.stone && <>, stone {r.data.stone} g</>}, scrap <b>{r.data.scrap_gross ?? '—'} g</b>{r.data.pieces != null && <>, {r.data.pieces} pcs</>}</>}
+        {r.type === 'return' && (
+          <>
+            Kaarigar says: work <b>{r.data.work_gross ?? '—'} g</b>{r.data.stone && <>, stone {r.data.stone} g</>}{r.data.pieces != null && <>, {r.data.pieces} pcs</>}
+            {r.data.raw_gross && <>, raw gold <b>{r.data.raw_gross} g</b></>}
+            {r.data.scrap_gross && <>, scrap <b>{r.data.scrap_gross} g</b></>}
+            {r.data.dust_gross && <>, dust <b>{r.data.dust_gross} g</b></>}
+            {r.data.rejected_gross && <>, rejected <b>{r.data.rejected_gross} g</b>{r.data.rejected_pieces != null && ` (${r.data.rejected_pieces} pcs)`}</>}
+          </>
+        )}
         {r.type === 'dispute' && <>“{r.data.reason}”{r.data.weight_received && <> · says received {r.data.weight_received} g</>}</>}
-        {r.type === 'advance' && <>Asks for an advance of <b>₹{r.data.amount}</b></>}
         {r.data.note && <p className="text-muted-foreground">“{r.data.note}”</p>}
         {r.review_note && <p className="text-muted-foreground">Store: {r.review_note}</p>}
       </div>
@@ -99,13 +109,17 @@ function RequestCard({ r }: { r: KRequest }) {
         <div className="mt-3 grid gap-3 border-t pt-3">
           {error && <Alert>{error.message}</Alert>}
           {r.type === 'return' && (
-            <div className="grid gap-3 sm:grid-cols-6">
+            <div className="grid gap-3 sm:grid-cols-4">
               <Field label="Weighed work g"><WeightInput value={w.work_gross} onValueChange={(v) => setW({ ...w, work_gross: v })} /></Field>
               <Field label="Stone g"><WeightInput value={w.stone} onValueChange={(v) => setW({ ...w, stone: v })} /></Field>
+              <Field label="Raw gold g" hint="Back to the vault"><WeightInput value={w.raw_gross} onValueChange={(v) => setW({ ...w, raw_gross: v })} /></Field>
+              <Field label="Rejected pieces g" hint="Back for rework"><WeightInput value={w.rejected_gross} onValueChange={(v) => setW({ ...w, rejected_gross: v })} /></Field>
               <Field label="Scrap g"><WeightInput value={w.scrap_gross} onValueChange={(v) => setW({ ...w, scrap_gross: v })} /></Field>
+              <Field label="Dust g"><WeightInput value={w.dust_gross} onValueChange={(v) => setW({ ...w, dust_gross: v })} /></Field>
               <Field label="Tunch %"><WeightInput scale={false} placeholder={r.job_card?.karat.purity_pct} value={w.purity} onValueChange={(v) => setW({ ...w, purity: v })} /></Field>
-              <Field label="Into">
+              <Field label="Work into">
                 <Select value={destination} onChange={(e) => setDestination(e.target.value)}>
+                  <option value="">Work order if linked, else finished</option>
                   <option value="finished">Finished goods</option>
                   <option value="vault">Vault</option>
                 </Select>

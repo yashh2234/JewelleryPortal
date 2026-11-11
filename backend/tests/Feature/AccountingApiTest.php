@@ -9,6 +9,7 @@ use App\Models\Karat;
 use App\Models\Retailer;
 use App\Models\Tenant;
 use App\Models\User;
+use App\Services\Accounting\Books;
 use App\Services\Metal\Ledger;
 use App\Services\Metal\MetalOperations;
 use App\Services\Production\Dispatching;
@@ -54,7 +55,7 @@ class AccountingApiTest extends TestCase
             $wo = $prod->newWorkOrder(Design::create(['code' => 'C1', 'name' => 'Chain', 'making_charge' => '400', 'making_type' => 'per_gram']), $k22->id, 1);
             $ledger->post('transfer', ['work_order_id' => $wo->id], [['from' => $ledger->vault(), 'to' => $ledger->workOrder($wo), 'karat' => $k22, 'gross' => '10']]);
             [$item] = $prod->finish($wo, [['gross' => '10']]);
-            $item->forceFill(['qc_status' => 'passed', 'huid' => 'AB12CD'])->save();
+            $item->forceFill(['qc_status' => 'passed'])->save();
 
             return [app(Dispatching::class)->dispatch($retailer, [$item->id], null), $retailer];
         });
@@ -66,10 +67,6 @@ class AccountingApiTest extends TestCase
         $this->assertSame('78280.00', $inv['amount']);   // 76000 + 3 %
 
         $this->as()->get($this->api("invoices/{$inv['id']}/pdf"))->assertOk()->assertHeader('content-type', 'application/pdf');
-        $this->as()->getJson($this->api("invoices/{$inv['id']}/einvoice.json"))
-            ->assertOk()->assertJsonPath('BuyerDtls.Gstin', '27ABCDE1234F1Z5')->assertJsonPath('ItemList.0.HsnCd', '7113');
-        $this->as()->postJson($this->api("invoices/{$inv['id']}/einvoice"))->assertUnprocessable();
-
         // Auto-posted vouchers are reversed at their source, not here.
         $this->as()->postJson($this->api("vouchers/{$inv['id']}/cancel"), ['reason' => 'x'])->assertUnprocessable();
 
@@ -86,22 +83,22 @@ class AccountingApiTest extends TestCase
         $this->as()->getJson($this->api('accounting-reports/gstr3b'))->assertOk()->assertJsonPath('outward_tax.cgst', '1140.00');
         $this->as()->getJson($this->api('accounting-reports/stock-valuation'))->assertOk();
 
-        $xml = $this->as()->get($this->api('accounting-reports/tally'))->assertOk()->getContent();
-        $this->assertStringContainsString('<VOUCHERTYPENAME>Sales</VOUCHERTYPENAME>', $xml);
-        $this->assertStringContainsString('<LEDGERNAME>Sharma</LEDGERNAME>', $xml);
+        // Tally and e-invoice exports are not part of the workflow blueprint.
+        $this->as()->get($this->api('accounting-reports/tally'))->assertNotFound();
+        $this->as()->getJson($this->api("invoices/{$inv['id']}/einvoice.json"))->assertNotFound();
     }
 
-    public function test_kaarigar_advance_paid_and_seen_in_app(): void
+    public function test_kaarigar_payment_seen_in_app(): void
     {
-        [$kaarigar, $appUser] = $this->asTenant($this->tenant, function () {
+        [$partyId, $appUser] = $this->asTenant($this->tenant, function () {
             $k = Kaarigar::create(['name' => 'Ramesh']);
 
-            return [$k, $k->appUsers()->create(['name' => 'Ramesh', 'phone' => '9876500001'])];
+            return [app(Books::class)->party($k)->id, $k->appUsers()->create(['name' => 'Ramesh', 'phone' => '9876500001'])];
         });
 
-        $this->actingAs($appUser, 'kaarigar')->postJson($this->on($this->tenant, 'api/kaarigar/v1/advances'), ['amount' => '2000'])->assertCreated();
-        $reqId = $this->as()->getJson($this->api('kaarigar-requests'))->json('data.0.id');
-        $this->as()->postJson($this->api("kaarigar-requests/{$reqId}/approve"), ['pay_mode' => 'cash'])->assertOk();
+        // Cash advances requested from the app are gone; the store pays the kaarigar directly.
+        $this->actingAs($appUser, 'kaarigar')->postJson($this->on($this->tenant, 'api/kaarigar/v1/advances'), ['amount' => '2000'])->assertNotFound();
+        $this->as()->postJson($this->api('vouchers/payment'), ['party_id' => $partyId, 'amount' => '2000', 'mode' => 'cash'])->assertCreated();
 
         $this->actingAs($appUser, 'kaarigar')->getJson($this->on($this->tenant, 'api/kaarigar/v1/earnings'))
             ->assertOk()->assertJsonPath('balance_due', '-2000.00')->assertJsonPath('rows.0.paid', '2000.00');

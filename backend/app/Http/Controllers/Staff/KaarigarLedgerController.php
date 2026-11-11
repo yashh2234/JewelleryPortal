@@ -40,25 +40,6 @@ class KaarigarLedgerController extends Controller
         ])->stream("khata-{$kaarigar->id}.pdf");
     }
 
-    public function wastage(Request $request): JsonResponse
-    {
-        $data = $request->validate([
-            'group' => ['nullable', 'in:kaarigar,process'],
-            'from' => ['nullable', 'date'],
-            'to' => ['nullable', 'date'],
-        ]);
-
-        $from = $data['from'] ?? today()->startOfMonth()->toDateString();
-        $to = $data['to'] ?? today()->toDateString();
-
-        return response()->json([
-            'from' => $from,
-            'to' => $to,
-            'group' => $data['group'] ?? 'kaarigar',
-            'data' => $this->statements->wastage($data['group'] ?? 'kaarigar', $from, $to),
-        ]);
-    }
-
     /** @return array{0: string, 1: ?string} */
     private function range(Request $request): array
     {

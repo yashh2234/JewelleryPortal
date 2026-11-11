@@ -12,6 +12,7 @@ use App\Models\OrderLine;
 use App\Models\Retailer;
 use App\Services\Metal\Ledger;
 use App\Services\Metal\LedgerException;
+use App\Services\Push\Notify;
 use App\Support\Metal\Weight;
 use App\Support\NumberSeries;
 use Illuminate\Support\Facades\DB;
@@ -56,9 +57,6 @@ class Dispatching
         foreach ($items as $item) {
             if ($item->status !== FinishedItem::IN_STOCK || $item->qc_status !== 'passed') {
                 throw new LedgerException("{$item->tag_no} is not ready to dispatch (must be in stock and QC-passed).");
-            }
-            if ($retailer->hallmark_mandatory && ! $item->huid) {
-                throw new LedgerException("{$item->tag_no} has no HUID. Hallmarking is mandatory for {$retailer->shop_name}.");
             }
         }
 
@@ -107,15 +105,17 @@ class Dispatching
                 $all = $lines->every(fn ($l) => $l->qty_dispatched >= $l->qty);
                 $o->forceFill(['status' => $all ? Order::DISPATCHED : Order::PARTIALLY_DISPATCHED])->save();
                 $track = $dispatch->tracking_no ? " {$dispatch->courier} {$dispatch->tracking_no}." : '';
-                app(\App\Services\Push\Notify::class)->orderStatus($o, ($all ? 'Dispatched' : 'Partly dispatched')." on challan {$challan}.{$track}", 'shipment.dispatched');
+                app(Notify::class)->orderStatus($o, ($all ? 'Dispatched' : 'Partly dispatched')." on challan {$challan}.{$track}", 'shipment.dispatched');
             }
 
-            if ($orders->isEmpty()) app(\App\Services\Push\Notify::class)->retailer(
-                $retailer->id,
-                'Your order is on the way',
-                "Challan {$challan}: {$items->count()} piece(s), {$dispatch->net_wt} g net.",
-                '/portal',
-            );
+            if ($orders->isEmpty()) {
+                app(Notify::class)->retailer(
+                    $retailer->id,
+                    'Your order is on the way',
+                    "Challan {$challan}: {$items->count()} piece(s), {$dispatch->net_wt} g net.",
+                    '/portal',
+                );
+            }
 
             return $dispatch->load('lines.item');
         });
@@ -131,7 +131,7 @@ class Dispatching
             if ($dispatch->shipment_status !== $before) {
                 $label = str_replace('_', ' ', $dispatch->shipment_status);
                 $msg = "Challan {$dispatch->challan_no}: {$label}".($dispatch->delivery_remarks ? " ({$dispatch->delivery_remarks})" : '').'.';
-                $notify = app(\App\Services\Push\Notify::class);
+                $notify = app(Notify::class);
 
                 if ($dispatch->order) {
                     $notify->orderStatus($dispatch->order, ucfirst($msg), 'shipment.'.$dispatch->shipment_status);

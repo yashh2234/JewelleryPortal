@@ -5,16 +5,22 @@ namespace App\Http\Controllers\Staff;
 use App\Http\Controllers\Controller;
 use App\Models\JobCard;
 use App\Models\Kaarigar;
+use App\Models\KaarigarRequest;
 use App\Models\Karat;
-use App\Models\MetalClosing;
 use App\Models\MetalLocation;
 use App\Models\MetalTransaction;
 use App\Models\Process;
 use App\Models\Retailer;
+use App\Models\WorkOrder;
+use App\Models\WoStep;
+use App\Services\Metal\IssueRules;
 use App\Services\Metal\Ledger;
 use App\Services\Metal\LedgerException;
 use App\Services\Metal\MetalOperations;
+use App\Services\Production\Production;
 use App\Support\Metal\Weight;
+use App\Support\Permissions;
+use App\Support\Tenancy\TenantContext;
 use App\Support\Tenancy\TenantRules;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Http\JsonResponse;
@@ -73,10 +79,10 @@ class MetalController extends Controller
 
         // Spec 16.3: every issue belongs to a work order (unless the workspace allows loose job cards).
         if (isset($data['work_order_id']) && ! isset($data['job_card_id'])) {
-            $wo = \App\Models\WorkOrder::findOrFail($data['work_order_id']);
-            $step = $wo->steps()->whereIn('status', [\App\Models\WoStep::PENDING, \App\Models\WoStep::IN_PROGRESS])->orderBy('sequence')->first()
+            $wo = WorkOrder::findOrFail($data['work_order_id']);
+            $step = $wo->steps()->whereIn('status', [WoStep::PENDING, WoStep::IN_PROGRESS])->orderBy('sequence')->first()
                 ?? throw new LedgerException("{$wo->wo_no} has no stage left to issue for.");
-            $tx = app(\App\Services\Production\Production::class)->issueForStep($step, (int) $data['kaarigar_id'], $data['items'], $this->header($data, ['override_reason']));
+            $tx = app(Production::class)->issueForStep($step, (int) $data['kaarigar_id'], $data['items'], $this->header($data, ['override_reason']));
 
             return $this->posted($tx);
         }
@@ -101,19 +107,19 @@ class MetalController extends Controller
 
     private function requireWorkOrder(): bool
     {
-        return (bool) (app(\App\Support\Tenancy\TenantContext::class)->get()->settings['require_work_order'] ?? true);
+        return (bool) (app(TenantContext::class)->get()->settings['require_work_order'] ?? true);
     }
 
     /** Can this kaarigar take more gold? Shown on the issue screen before saving. */
     public function issueCheck(Request $request): JsonResponse
     {
         $data = $request->validate(['kaarigar_id' => ['required', TenantRules::exists('kaarigars')]]);
-        $kaarigar = \App\Models\Kaarigar::findOrFail($data['kaarigar_id']);
+        $kaarigar = Kaarigar::findOrFail($data['kaarigar_id']);
 
         return response()->json([
-            'blockers' => app(\App\Services\Metal\IssueRules::class)->blockers($kaarigar),
-            'can_override' => $request->user('staff')->can(\App\Support\Permissions::METAL_APPROVE_LOSS),
-            'held' => app(\App\Services\Metal\Ledger::class)->balance($this->ops->kaarigarLocation($kaarigar))['fine'],
+            'blockers' => app(IssueRules::class)->blockers($kaarigar),
+            'can_override' => $request->user('staff')->can(Permissions::METAL_APPROVE_LOSS),
+            'held' => app(Ledger::class)->balance($this->ops->kaarigarLocation($kaarigar))['fine'],
             'limit' => $kaarigar->max_fine_balance,
         ]);
     }
@@ -121,8 +127,8 @@ class MetalController extends Controller
     /** Staff record the kaarigar's signature on the printed issue slip (no app). */
     public function acknowledge(MetalTransaction $transaction): JsonResponse
     {
-        if ($transaction->type !== MetalTransaction::ISSUE || $transaction->isReversed()) {
-            throw new LedgerException('Only live gold issues can be acknowledged.');
+        if (! $transaction->needsAck() || $transaction->isReversed()) {
+            throw new LedgerException('Only live gold issues and handoffs can be acknowledged.');
         }
         if ($transaction->kaarigar_ack === 'accepted') {
             return response()->json(['data' => $this->present($transaction)]);
@@ -134,41 +140,40 @@ class MetalController extends Controller
         return response()->json(['data' => $this->present($transaction->load(['lines.from', 'lines.to', 'lines.karat', 'kaarigar', 'retailer', 'jobCard']))]);
     }
 
+    /**
+     * Return voucher: finished work, raw gold, semi-finished or rejected pieces,
+     * scrap and dust, each as its own line (blueprint §3).
+     */
     public function receive(Request $request): JsonResponse
     {
+        $part = fn (string $k, bool $stone = true) => [
+            $k => ['nullable', 'array'],
+            "{$k}.gross" => ["required_with:{$k}", 'decimal:0,3', 'gt:0'],
+            "{$k}.purity" => ['nullable', 'decimal:0,3', 'gt:0', 'max:100'],
+            "{$k}.pieces" => ['nullable', 'integer', 'min:0'],
+        ] + ($stone ? ["{$k}.stone" => ['nullable', 'decimal:0,3', 'min:0'], "{$k}.findings" => ['nullable', 'decimal:0,3', 'min:0']] : []);
+
         $data = $request->validate($this->headerRules() + [
             'job_card_id' => ['required', TenantRules::exists('job_cards')],
             'destination' => ['required', Rule::in(['vault', 'finished', 'wo'])],
-            'work' => ['nullable', 'array'],
-            'work.gross' => ['required_with:work', 'decimal:0,3', 'gt:0'],
-            'work.stone' => ['nullable', 'decimal:0,3', 'min:0'],
-            'work.findings' => ['nullable', 'decimal:0,3', 'min:0'],
-            'work.purity' => ['nullable', 'decimal:0,3', 'gt:0', 'max:100'],
-            'work.pieces' => ['nullable', 'integer', 'min:0'],
-            'scrap' => ['nullable', 'array'],
-            'scrap.gross' => ['required_with:scrap', 'decimal:0,3', 'gt:0'],
-            'scrap.purity' => ['nullable', 'decimal:0,3', 'gt:0', 'max:100'],
             'close' => ['boolean'],
-        ]);
+        ] + $part('work') + $part('semi') + $part('rejected') + $part('raw', false) + $part('scrap', false) + $part('dust', false));
 
         $card = JobCard::findOrFail($data['job_card_id']);
+        $parts = Arr::only($data, [...MetalOperations::RETURN_KINDS, ...MetalOperations::SCRAP_KINDS]);
 
-        $result = DB::transaction(function () use ($card, $data) {
-            $tx = $this->ops->receive($card, $data['work'] ?? null, $data['scrap'] ?? null, $data['destination'], $this->header($data));
+        [$tx, $closed] = DB::transaction(function () use ($card, $data, $parts) {
+            $tx = $this->ops->receiveParts($card, $parts, $data['destination'], $this->header($data));
             $closed = ($data['close'] ?? false) ? $this->ops->closeJobCard($card, $data['date'] ?? null) : null;
 
             return [$tx, $closed];
         });
 
-        [$tx, $closed] = $result;
-
         return response()->json([
             'data' => $this->present($tx),
             'job_card' => $closed ? $this->presentCard($closed) : null,
-            // The receive screen shows the loss and the alert flag straight away.
-            'alert' => $closed && Weight::isPositive($closed->excess_loss_fine)
-                ? "Loss {$closed->loss_fine} g is above the allowed {$closed->allowed_wastage_pct}%. {$closed->excess_loss_fine} g stays on the kaarigar's balance."
-                : null,
+            // The receive screen shows the difference and that it waits for approval.
+            'alert' => $closed ? JobCardController::lossAlert($closed->load('kaarigar')) : null,
         ], 201);
     }
 
@@ -224,13 +229,13 @@ class MetalController extends Controller
     public function transactions(Request $request): JsonResponse
     {
         $rows = MetalTransaction::query()
-            ->with(['lines.from:id,type,name', 'lines.to:id,type,name', 'lines.karat:id,label', 'kaarigar:id,name', 'retailer:id,shop_name', 'jobCard:id,card_no', 'creator:id,name'])
+            ->with(['lines.from:id,type,name', 'lines.to:id,type,name', 'lines.karat:id,label', 'kaarigar:id,name', 'retailer:id,shop_name', 'jobCard:id,card_no', 'fromJobCard:id,card_no', 'creator:id,name', 'postedByKaarigarUser:id,name'])
             ->when($request->filled('type'), fn ($q) => $q->where('type', $request->string('type')))
             ->when($request->filled('kaarigar_id'), fn ($q) => $q->where('kaarigar_id', $request->integer('kaarigar_id')))
-            ->when($request->filled('job_card_id'), fn ($q) => $q->where('job_card_id', $request->integer('job_card_id')))
+            ->when($request->filled('job_card_id'), fn ($q) => $q->where(fn ($q) => $q->where('job_card_id', $request->integer('job_card_id'))->orWhere('from_job_card_id', $request->integer('job_card_id'))))
             ->when($request->filled('from'), fn ($q) => $q->where('date', '>=', $request->date('from')->toDateString()))
             ->when($request->filled('to'), fn ($q) => $q->where('date', '<=', $request->date('to')->toDateString()))
-            ->when($request->boolean('unconfirmed'), fn ($q) => $q->where('type', MetalTransaction::ISSUE)->whereNull('kaarigar_ack')->whereNull('reversed_by_id'))
+            ->when($request->boolean('unconfirmed'), fn ($q) => $q->whereIn('type', [MetalTransaction::ISSUE, MetalTransaction::HANDOFF])->whereNull('kaarigar_ack')->whereNull('reversed_by_id'))
             ->latest('id')
             ->paginate($request->integer('per_page', 50));
 
@@ -241,7 +246,7 @@ class MetalController extends Controller
 
     public function show(MetalTransaction $transaction): JsonResponse
     {
-        return response()->json(['data' => $this->present($transaction->load(['lines.from', 'lines.to', 'lines.karat', 'kaarigar', 'retailer', 'jobCard', 'creator']))]);
+        return response()->json(['data' => $this->present($transaction->load(['lines.from', 'lines.to', 'lines.karat', 'kaarigar', 'retailer', 'jobCard', 'fromJobCard', 'creator', 'postedByKaarigarUser']))]);
     }
 
     /** Stock per karat at a stock location (vault, scrap, finished). */
@@ -298,81 +303,20 @@ class MetalController extends Controller
             ]]),
             'overdue_job_cards' => JobCard::where('status', JobCard::OPEN)->whereNotNull('due_date')->where('due_date', '<', $today)->count(),
             'open_job_cards' => JobCard::where('status', JobCard::OPEN)->count(),
-            'wastage_alerts' => JobCard::where('status', JobCard::CLOSED)->where('excess_loss_fine', '>', 0)->whereNull('excess_resolution')->count(),
-            'unconfirmed_issues' => MetalTransaction::where('type', MetalTransaction::ISSUE)->whereNull('kaarigar_ack')->whereNull('reversed_by_id')
+            'wastage_alerts' => JobCard::where('loss_status', JobCard::LOSS_PENDING)->count(),
+            'pending_loss_fine' => Weight::fromDb((string) JobCard::where('loss_status', JobCard::LOSS_PENDING)->sum('loss_fine')),
+            'unconfirmed_issues' => MetalTransaction::whereIn('type', [MetalTransaction::ISSUE, MetalTransaction::HANDOFF])->whereNull('kaarigar_ack')->whereNull('reversed_by_id')
                 ->where('created_at', '<', now()->subHours($unconfirmedHours))->count(),
             'disputed_issues' => MetalTransaction::where('kaarigar_ack', 'disputed')->whereNull('reversed_by_id')->count(),
-            'pending_requests' => \App\Models\KaarigarRequest::where('status', 'pending')->count(),
-            'last_closed' => $this->ledger->lastClosedDate(),
+            'pending_requests' => KaarigarRequest::where('status', 'pending')->count(),
         ]);
-    }
-
-    public function daybook(Request $request): JsonResponse
-    {
-        $date = $request->date('date')?->toDateString() ?? today()->toDateString();
-        $previous = date('Y-m-d', strtotime($date.' -1 day'));
-
-        $txs = MetalTransaction::with(['lines.from:id,type,name', 'lines.to:id,type,name', 'lines.karat:id,label', 'kaarigar:id,name', 'retailer:id,shop_name', 'jobCard:id,card_no', 'creator:id,name'])
-            ->where('date', $date)->orderBy('id')->get();
-
-        return response()->json([
-            'date' => $date,
-            'opening' => $this->ledger->totalsByType($previous),
-            'closing' => $this->ledger->totalsByType($date),
-            'transactions' => $txs->map(fn ($tx) => $this->present($tx)),
-            'closed' => MetalClosing::where('date', $date)->first(),
-            'last_closed' => $this->ledger->lastClosedDate(),
-        ]);
-    }
-
-    /**
-     * Daily closing: compare the system vault with the physical count. The day (and
-     * everything before it) is locked afterwards. A difference must be explained.
-     */
-    public function close(Request $request): JsonResponse
-    {
-        $data = $request->validate([
-            'date' => ['required', 'date', 'before_or_equal:today'],
-            'physical_vault_fine' => ['nullable', 'decimal:0,3', 'min:0'],
-            'remarks' => ['nullable', 'string', 'max:500'],
-        ]);
-        $date = $request->date('date')->toDateString();
-
-        $last = $this->ledger->lastClosedDate();
-        if ($last && $date <= $last) {
-            throw new LedgerException("Already closed up to {$last}.");
-        }
-
-        $system = $this->ledger->balance($this->ledger->vault(), asOf: $date)['fine'];
-        $physical = isset($data['physical_vault_fine']) ? Weight::round((string) $data['physical_vault_fine']) : null;
-        $difference = $physical !== null ? Weight::sub($physical, $system) : '0.000';
-
-        if (Weight::compare($difference, '0') !== 0 && empty($data['remarks'])) {
-            throw new LedgerException("The physical count differs from the system by {$difference} g. Explain the difference in the remarks to close the day.");
-        }
-
-        $closing = MetalClosing::create([
-            'date' => $date,
-            'system_vault_fine' => $system,
-            'physical_vault_fine' => $physical,
-            'difference_fine' => $difference,
-            'summary' => $this->ledger->totalsByType($date),
-            'remarks' => $data['remarks'] ?? null,
-        ]);
-
-        return response()->json(['data' => $closing], 201);
-    }
-
-    public function closings(): JsonResponse
-    {
-        return response()->json(['data' => MetalClosing::latest('date')->limit(60)->get()]);
     }
 
     /** Printable issue / receive slip with signature lines. */
     public function slip(MetalTransaction $transaction): Response
     {
         $transaction->load(['lines.from', 'lines.to', 'lines.karat', 'kaarigar', 'retailer', 'jobCard.process', 'creator']);
-        $tenant = app(\App\Support\Tenancy\TenantContext::class)->get();
+        $tenant = app(TenantContext::class)->get();
 
         $pdf = Pdf::loadView('pdf.metal-slip', ['tx' => $transaction, 'tenant' => $tenant])->setPaper('a5');
 
@@ -410,7 +354,7 @@ class MetalController extends Controller
 
     private function posted(MetalTransaction $tx): JsonResponse
     {
-        return response()->json(['data' => $this->present($tx->load(['lines.from', 'lines.to', 'lines.karat', 'kaarigar', 'retailer', 'jobCard']))], 201);
+        return response()->json(['data' => $this->present($tx->load(['lines.from', 'lines.to', 'lines.karat', 'kaarigar', 'retailer', 'jobCard', 'fromJobCard']))], 201);
     }
 
     public static function present(MetalTransaction $tx): array
@@ -423,6 +367,7 @@ class MetalController extends Controller
             'kaarigar' => $tx->kaarigar?->only(['id', 'name']),
             'retailer' => $tx->retailer?->only(['id', 'shop_name']),
             'job_card' => $tx->jobCard?->only(['id', 'card_no']),
+            'from_job_card' => $tx->relationLoaded('fromJobCard') ? $tx->fromJobCard?->only(['id', 'card_no']) : null,
             'party_name' => $tx->party_name,
             'reference' => $tx->reference,
             'remarks' => $tx->remarks,
@@ -430,7 +375,10 @@ class MetalController extends Controller
             'reversed_by_id' => $tx->reversed_by_id,
             'reverses_id' => $tx->reverses_id,
             'kaarigar_ack' => $tx->kaarigar_ack,
-            'created_by' => $tx->relationLoaded('creator') ? $tx->creator?->name : null,
+            // Handoffs posted from the kaarigar app name the kaarigar, not a staff user.
+            'created_by' => $tx->relationLoaded('postedByKaarigarUser') && $tx->postedByKaarigarUser
+                ? $tx->postedByKaarigarUser->name.' (kaarigar app)'
+                : ($tx->relationLoaded('creator') ? $tx->creator?->name : null),
             'created_at' => $tx->created_at?->toIso8601String(),
             'fine_total' => Weight::add('0', ...$tx->lines->whereNotIn('kind', ['loss', 'alloy'])
                 ->filter(fn ($l) => $l->relationLoaded('from') ? ! in_array($l->from?->type, [MetalLocation::MELT, MetalLocation::REFINER], true) : true)
@@ -449,10 +397,14 @@ class MetalController extends Controller
     public static function presentCard(JobCard $card, ?array $live = null): array
     {
         return $card->only([
-            'id', 'card_no', 'status', 'kaarigar_status', 'description', 'pieces', 'due_date', 'wo_step_id',
-            'issued_fine', 'returned_fine', 'scrap_fine', 'loss_fine', 'allowed_loss_fine', 'excess_loss_fine',
-            'allowed_wastage_pct', 'excess_resolution', 'closed_at', 'created_at',
+            'id', 'card_no', 'status', 'kaarigar_status', 'description', 'pieces', 'due_date', 'wo_step_id', 'parent_job_card_id',
+            'issued_fine', 'handed_in_fine', 'returned_fine', 'scrap_fine', 'handed_out_fine', 'loss_fine', 'allowed_loss_fine', 'excess_loss_fine',
+            'allowed_wastage_pct', 'excess_resolution', 'loss_status', 'loss_reason_code', 'loss_note', 'started_at', 'ready_at',
+            'closed_at', 'created_at',
         ]) + [
+            'parent' => $card->relationLoaded('parent') && $card->parent
+                ? ['id' => $card->parent->id, 'card_no' => $card->parent->card_no, 'kaarigar' => $card->parent->relationLoaded('kaarigar') ? $card->parent->kaarigar?->only(['id', 'name']) : null]
+                : null,
             'kaarigar' => $card->kaarigar?->only(['id', 'name']),
             'process' => $card->process?->only(['id', 'name']),
             'karat' => $card->karat?->only(['id', 'label', 'purity_pct']),

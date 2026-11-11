@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Models\Collection;
 use App\Models\Design;
+use App\Models\Dispatch;
 use App\Models\GoldRate;
 use App\Models\Karat;
 use App\Models\Retailer;
@@ -118,7 +119,7 @@ class PortalTest extends TestCase
         $other = $this->asTenant($this->tenant, function () {
             $r = Retailer::create(['shop_name' => 'Other', 'status' => 'active']);
 
-            return \App\Models\Dispatch::create(['challan_no' => 'DC/X/1', 'retailer_id' => $r->id, 'date' => today()->toDateString(), 'pieces' => 0, 'gross_wt' => '0', 'net_wt' => '0', 'fine_wt' => '0']);
+            return Dispatch::create(['challan_no' => 'DC/X/1', 'retailer_id' => $r->id, 'date' => today()->toDateString(), 'pieces' => 0, 'gross_wt' => '0', 'net_wt' => '0', 'fine_wt' => '0']);
         });
         $this->as()->get($this->portal("challans/{$other->id}/pdf"))->assertNotFound();
     }

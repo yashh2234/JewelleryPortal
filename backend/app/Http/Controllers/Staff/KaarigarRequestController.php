@@ -12,7 +12,7 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
 
-/** Store inbox for kaarigar app requests: approve returns, resolve disputes, advances. */
+/** Store inbox for kaarigar app requests: approve returns, resolve disputes. */
 class KaarigarRequestController extends Controller
 {
     public function __construct(private MetalOperations $ops) {}
@@ -38,13 +38,14 @@ class KaarigarRequestController extends Controller
             'work_gross' => ['nullable', 'decimal:0,3', 'min:0'],
             'stone' => ['nullable', 'decimal:0,3', 'min:0'],
             'scrap_gross' => ['nullable', 'decimal:0,3', 'min:0'],
+            'raw_gross' => ['nullable', 'decimal:0,3', 'min:0'],
+            'dust_gross' => ['nullable', 'decimal:0,3', 'min:0'],
+            'rejected_gross' => ['nullable', 'decimal:0,3', 'min:0'],
+            'rejected_pieces' => ['nullable', 'integer', 'min:0'],
             'purity' => ['nullable', 'decimal:0,3', 'gt:0', 'max:100'],
             'pieces' => ['nullable', 'integer', 'min:0'],
             'close' => ['boolean'],
             'note' => ['nullable', 'string', 'max:500'],
-            // Advances: pay now from cash/bank (posts a payment voucher to the kaarigar).
-            'pay_mode' => ['nullable', Rule::in(['cash', 'bank', 'upi'])],
-            'amount' => ['nullable', 'decimal:0,2', 'gt:0'],
         ]);
 
         $req = $kaarigarRequest;
@@ -57,15 +58,22 @@ class KaarigarRequestController extends Controller
             $closed = null;
 
             if ($req->type === KaarigarRequest::RETURN) {
+                // The store's weighed figures win; otherwise what the kaarigar reported.
                 $asked = $req->data ?? [];
-                $work = $data['work_gross'] ?? $asked['work_gross'] ?? null;
-                $scrap = $data['scrap_gross'] ?? $asked['scrap_gross'] ?? null;
+                $w = fn (string $k) => $data[$k] ?? $asked[$k] ?? null;
                 $purity = $data['purity'] ?? null;
+                $part = fn (?string $gross, array $extra = []) => $gross !== null && (float) $gross > 0
+                    ? ['gross' => (string) $gross, 'purity' => $purity] + $extra : null;
 
-                $tx = $this->ops->receive(
+                $tx = $this->ops->receiveParts(
                     $req->jobCard,
-                    $work && (float) $work > 0 ? ['gross' => (string) $work, 'stone' => (string) ($data['stone'] ?? $asked['stone'] ?? '0'), 'purity' => $purity, 'pieces' => $data['pieces'] ?? $asked['pieces'] ?? null] : null,
-                    $scrap && (float) $scrap > 0 ? ['gross' => (string) $scrap, 'purity' => $purity] : null,
+                    [
+                        'work' => $part($w('work_gross'), ['stone' => (string) ($w('stone') ?? '0'), 'pieces' => $w('pieces')]),
+                        'raw' => $part($w('raw_gross')),
+                        'rejected' => $part($w('rejected_gross'), ['pieces' => $w('rejected_pieces')]),
+                        'scrap' => $part($w('scrap_gross')),
+                        'dust' => $part($w('dust_gross')),
+                    ],
                     $data['destination'] ?? ($req->jobCard->wo_step_id ? 'wo' : 'finished'),
                     ['remarks' => 'From kaarigar app return request #'.$req->id],
                 );
@@ -75,20 +83,7 @@ class KaarigarRequestController extends Controller
                 }
             }
 
-            $voucher = null;
-            if ($req->type === KaarigarRequest::ADVANCE && ! empty($data['pay_mode'])) {
-                $books = app(\App\Services\Accounting\Books::class);
-                $voucher = app(\App\Services\Accounting\Vouchers::class)->payment(
-                    $books->party($req->kaarigar),
-                    (string) ($data['amount'] ?? $req->data['amount']),
-                    $data['pay_mode'],
-                    today()->toDateString(),
-                    'Advance (kaarigar app request #'.$req->id.')',
-                );
-            }
-
             $req->forceFill([
-                'voucher_id' => $voucher?->id,
                 'status' => KaarigarRequest::APPROVED,
                 'review_note' => $data['note'] ?? null,
                 'reviewed_by' => Auth::guard('staff')->id(),

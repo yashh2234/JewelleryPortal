@@ -32,7 +32,7 @@ export default function TransactionsPage() {
 
   return (
     <>
-      <PageTitle title="Gold transactions">
+      <PageTitle title="Gold movement ledger" description="Every issue, handoff between kaarigars, return, transfer and approved loss. Append-only: corrections are reversals.">
         <Select className="w-40" value={type} onChange={(e) => setType(e.target.value)}>
           <option value="">All types</option>
           {Object.entries(TX_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
@@ -56,7 +56,7 @@ export default function TransactionsPage() {
                   {tx.type === 'issue' && !tx.reversed_by_id && tx.kaarigar_ack === 'accepted' && <Badge tone="success" className="ml-1">acknowledged</Badge>}
                   {tx.type === 'issue' && !tx.reversed_by_id && !tx.kaarigar_ack && <Badge className="ml-1">awaiting acknowledgement</Badge>}
                 </Td>
-                <Td>{tx.kaarigar?.name ?? tx.retailer?.shop_name ?? tx.party_name ?? '—'}{tx.job_card && <span className="text-xs text-muted-foreground"> · {tx.job_card.card_no}</span>}</Td>
+                <Td>{tx.kaarigar?.name ?? tx.retailer?.shop_name ?? tx.party_name ?? '—'}{tx.job_card && <span className="text-xs text-muted-foreground"> · {tx.from_job_card ? `${tx.from_job_card.card_no} → ` : ''}{tx.job_card.card_no}</span>}</Td>
                 <Td className="tabular">{tx.fine_total}</Td>
                 <Td className="text-xs">{tx.created_by}</Td>
                 <Td className="whitespace-nowrap text-right">

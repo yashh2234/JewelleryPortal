@@ -4,6 +4,7 @@ namespace App\Services\Accounting;
 
 use App\Http\Controllers\Staff\GoldRateController;
 use App\Models\Account;
+use App\Models\Kaarigar;
 use App\Models\Karat;
 use App\Models\MetalLocation;
 use App\Models\Party;
@@ -116,6 +117,7 @@ class Reports
             }
             if (in_array($a->nature, ['income', 'expense'], true)) {
                 $profit = Money::add($profit, Money::sub($s['cr'], $s['dr']));
+
                 continue;
             }
             $amt = $a->nature === 'asset' ? Money::sub($s['dr'], $s['cr']) : Money::sub($s['cr'], $s['dr']);
@@ -161,7 +163,7 @@ class Reports
             'opening' => $opening, 'closing' => ['money' => $money, 'fine' => $fine], 'rows' => $rows];
 
         // Kaarigars' gold is tracked in the gold ledger (Module 1); show it alongside.
-        if ($party->type === 'kaarigar' && ($k = \App\Models\Kaarigar::find($party->ref_id))) {
+        if ($party->type === 'kaarigar' && ($k = Kaarigar::find($party->ref_id))) {
             $result['gold_in_hand'] = $this->ledger->balance($this->ledger->kaarigar($k))['fine'];
         }
 
@@ -321,44 +323,5 @@ class Reports
 
         return ['as_of' => $asOf, 'rows' => $rows, 'total_value' => Money::add('0', ...array_column($rows, 'value')),
             'missing_rates' => collect($rows)->whereNull('rate')->pluck('karat')->unique()->values()];
-    }
-
-    /** Tally-importable XML (vouchers with ledger entries). Party ledgers use the party name. */
-    public function tallyXml(string $from, string $to): string
-    {
-        $tenant = $this->context->get();
-        $vouchers = Voucher::with(['entries.account', 'entries.party'])->where('status', 'posted')
-            ->whereBetween('date', [$from, $to])->orderBy('date')->orderBy('id')->get();
-
-        $typeMap = [
-            'sales' => 'Sales', 'purchase' => 'Purchase', 'receipt' => 'Receipt', 'payment' => 'Payment',
-            'contra' => 'Contra', 'credit_note' => 'Credit Note', 'debit_note' => 'Debit Note',
-        ];
-        $x = fn ($s) => htmlspecialchars((string) $s, ENT_XML1);
-
-        $out = '<?xml version="1.0" encoding="UTF-8"?>'."\n<ENVELOPE>\n<HEADER><TALLYREQUEST>Import Data</TALLYREQUEST></HEADER>\n<BODY><IMPORTDATA>\n"
-            .'<REQUESTDESC><REPORTNAME>Vouchers</REPORTNAME><STATICVARIABLES><SVCURRENTCOMPANY>'.$x($tenant->name)."</SVCURRENTCOMPANY></STATICVARIABLES></REQUESTDESC>\n<REQUESTDATA>\n";
-
-        foreach ($vouchers as $v) {
-            $moneyLines = $v->entries->filter(fn ($e) => ! Money::isZero($e->debit) || ! Money::isZero($e->credit));
-            if ($moneyLines->isEmpty()) {
-                continue; // metal-only vouchers have no Tally equivalent
-            }
-            $vt = $typeMap[$v->type] ?? 'Journal';
-            $out .= '<TALLYMESSAGE xmlns:UDF="TallyUDF"><VOUCHER VCHTYPE="'.$x($vt).'" ACTION="Create">'
-                .'<DATE>'.str_replace('-', '', $v->date).'</DATE><VOUCHERTYPENAME>'.$x($vt).'</VOUCHERTYPENAME>'
-                .'<VOUCHERNUMBER>'.$x($v->voucher_no).'</VOUCHERNUMBER><NARRATION>'.$x($v->narration).'</NARRATION>';
-            foreach ($moneyLines as $e) {
-                $ledger = $e->party?->name ?? $e->account->name;
-                $isDr = ! Money::isZero($e->debit);
-                // Tally: debit amounts negative, ISDEEMEDPOSITIVE Yes.
-                $amount = $isDr ? '-'.$e->debit : $e->credit;
-                $out .= '<ALLLEDGERENTRIES.LIST><LEDGERNAME>'.$x($ledger).'</LEDGERNAME><ISDEEMEDPOSITIVE>'.($isDr ? 'Yes' : 'No')
-                    .'</ISDEEMEDPOSITIVE><AMOUNT>'.$amount.'</AMOUNT></ALLLEDGERENTRIES.LIST>';
-            }
-            $out .= "</VOUCHER></TALLYMESSAGE>\n";
-        }
-
-        return $out."</REQUESTDATA>\n</IMPORTDATA></BODY>\n</ENVELOPE>\n";
     }
 }

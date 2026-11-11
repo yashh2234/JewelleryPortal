@@ -8,7 +8,6 @@ interface Detail {
   credit_limit: string
   making_slab_id: number | null
   metal_account_enabled: boolean
-  hallmark_mandatory: boolean
   salesperson_id: number | null
   payment_terms_days: number | null
   collections: { id: number; name: string }[]
@@ -23,11 +22,11 @@ export default function RetailerSettings({ id, onDone }: { id: number; onDone: (
   const collections = useQuery({ queryKey: ['collections'], queryFn: () => api.get<{ data: { id: number; name: string }[] }>('/api/v1/collections') })
   const d = detail.data?.data
 
-  const [form, setForm] = useState<{ credit_limit: string; making_slab_id: string; metal_account_enabled: boolean; hallmark_mandatory: boolean; collection_ids: number[]; salesperson_id: string; payment_terms_days: string } | null>(null)
+  const [form, setForm] = useState<{ credit_limit: string; making_slab_id: string; metal_account_enabled: boolean; collection_ids: number[]; salesperson_id: string; payment_terms_days: string } | null>(null)
   if (d && !form) {
     setForm({
       credit_limit: d.credit_limit, making_slab_id: d.making_slab_id ? String(d.making_slab_id) : '',
-      metal_account_enabled: d.metal_account_enabled, hallmark_mandatory: d.hallmark_mandatory,
+      metal_account_enabled: d.metal_account_enabled,
       collection_ids: d.collections.map((c) => c.id),
       salesperson_id: d.salesperson_id ? String(d.salesperson_id) : '', payment_terms_days: d.payment_terms_days ? String(d.payment_terms_days) : '',
     })
@@ -37,7 +36,7 @@ export default function RetailerSettings({ id, onDone }: { id: number; onDone: (
     mutationFn: async () => {
       await api.patch(`/api/v1/retailers/${id}`, {
         credit_limit: form!.credit_limit || '0', making_slab_id: form!.making_slab_id ? Number(form!.making_slab_id) : null,
-        metal_account_enabled: form!.metal_account_enabled, hallmark_mandatory: form!.hallmark_mandatory,
+        metal_account_enabled: form!.metal_account_enabled,
         salesperson_id: form!.salesperson_id ? Number(form!.salesperson_id) : null,
         payment_terms_days: form!.payment_terms_days ? Number(form!.payment_terms_days) : null,
       })
@@ -69,7 +68,6 @@ export default function RetailerSettings({ id, onDone }: { id: number; onDone: (
         </Field>
         <Field label="Payment terms (days)" hint="Credit period after invoice"><Input inputMode="numeric" value={form.payment_terms_days} onChange={(e) => setForm({ ...form, payment_terms_days: e.target.value.replace(/\D/g, '') })} /></Field>
         <Checkbox label="Metal account (can deposit gold and buy against it)" checked={form.metal_account_enabled} onChange={(e) => setForm({ ...form, metal_account_enabled: e.target.checked })} />
-        <Checkbox label="Hallmarking mandatory (district notified)" checked={form.hallmark_mandatory} onChange={(e) => setForm({ ...form, hallmark_mandatory: e.target.checked })} />
         <div className="sm:col-span-2">
           <p className="mb-1 text-sm font-medium">Catalogue collections this retailer sees</p>
           <p className="mb-2 text-xs text-muted-foreground">None ticked = all published designs.</p>
