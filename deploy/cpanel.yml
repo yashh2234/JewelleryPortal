@@ -1,0 +1,17 @@
+---
+# Copied to the root of the `deploy` branch as .cpanel.yml by GitHub Actions.
+# cPanel → Git Version Control → this repo (branch: deploy) → "Update from Remote", then "Deploy HEAD Commit".
+#
+# Change these two lines to match the hosting account:
+#   DEPLOYPATH  the Laravel app folder (its public/ folder is the domain's document root)
+#   PHP         PHP 8.3 CLI (EasyApache path; `ls /opt/cpanel/` shows the installed versions)
+deployment:
+  tasks:
+    - export DEPLOYPATH=$HOME/goldapp
+    - export PHP=/opt/cpanel/ea-php83/root/usr/bin/php
+    - /bin/mkdir -p $DEPLOYPATH
+    # Code: mirror the branch, but never touch .env, uploaded files, logs or the storage link.
+    - /usr/bin/rsync -a --delete --exclude .git --exclude .cpanel.yml --exclude /.env --exclude /storage/ --exclude /public/storage ./ $DEPLOYPATH/
+    # First deploy only: create the storage folders without overwriting anything already there.
+    - /usr/bin/rsync -a --ignore-existing storage/ $DEPLOYPATH/storage/
+    - cd $DEPLOYPATH && $PHP artisan migrate --force && $PHP artisan optimize

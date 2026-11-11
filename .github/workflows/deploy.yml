@@ -1,7 +1,7 @@
-# Build on GitHub, ship plain files to cPanel. Node never runs on the server.
-#
-# Repository secrets:
-#   CPANEL_HOST, CPANEL_USER, CPANEL_SSH_KEY, CPANEL_APP_PATH (e.g. /home/user/goldapp)
+# Test on every push. On main, build everything the server needs (PHP vendor/ and the
+# compiled front end) and commit it to the `deploy` branch. cPanel's Git Version Control
+# pulls that branch; its .cpanel.yml (from deploy/cpanel.yml) copies it into place and
+# migrates. Node and Composer never run on the server, and no secrets are needed.
 name: Test & deploy
 
 on:
@@ -51,10 +51,12 @@ jobs:
             backend/public/pwa-*.png
             backend/public/favicon.svg
 
-  deploy:
+  deploy-branch:
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     needs: [test, build-frontend]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -66,18 +68,17 @@ jobs:
           php-version: '8.3'
       - run: composer install --no-dev --optimize-autoloader --no-interaction --prefer-dist
         working-directory: backend
-      - name: Upload over SSH
+      - name: Commit the build to the deploy branch
+        env:
+          REMOTE: https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
         run: |
-          mkdir -p ~/.ssh
-          echo "${{ secrets.CPANEL_SSH_KEY }}" > ~/.ssh/id_deploy && chmod 600 ~/.ssh/id_deploy
-          ssh-keyscan -H "${{ secrets.CPANEL_HOST }}" >> ~/.ssh/known_hosts
-          rsync -az --delete \
-            --exclude '.env' --exclude 'storage/' --exclude 'database/database.sqlite' --exclude 'tests/' \
-            -e "ssh -i ~/.ssh/id_deploy" \
-            backend/ "${{ secrets.CPANEL_USER }}@${{ secrets.CPANEL_HOST }}:${{ secrets.CPANEL_APP_PATH }}/"
-      - name: Migrate and cache
-        run: |
-          ssh -i ~/.ssh/id_deploy "${{ secrets.CPANEL_USER }}@${{ secrets.CPANEL_HOST }}" "cd ${{ secrets.CPANEL_APP_PATH }} \
-            && php artisan migrate --force \
-            && php artisan config:cache && php artisan route:cache && php artisan view:cache \
-            && php artisan queue:restart"
+          git clone --quiet --depth 1 --branch deploy "$REMOTE" out             || { git init --quiet -b deploy out && git -C out remote add origin "$REMOTE"; }
+          rsync -a --delete --exclude .git --exclude /tests/ --exclude /node_modules/ --exclude /.env backend/ out/
+          cp deploy/cpanel.yml out/.cpanel.yml
+          cd out
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A && git add -f vendor public
+          if git diff --cached --quiet; then echo "Nothing changed"; exit 0; fi
+          git commit --quiet -m "Build of ${GITHUB_SHA::7}: $(git -C .. log -1 --format=%s)"
+          git push --quiet origin deploy
